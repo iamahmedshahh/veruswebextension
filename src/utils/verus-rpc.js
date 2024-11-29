@@ -5,13 +5,16 @@ const RPC_SERVER = import.meta.env.VITE_VRSCTEST_RPC_SERVER?.replace(/['"]/g, ''
  * Make an RPC call to the Verus daemon
  * @param {string} method - The RPC method to call
  * @param {Array} params - The parameters to pass to the method
+ * @param {string} currency - The currency to use (optional)
  * @returns {Promise<any>} - The response from the RPC server
  */
-async function makeRPCCall(method, params = []) {
-    console.log('Making RPC call to', RPC_SERVER, '- Method:', method, 'Params:', params);
+async function makeRPCCall(method, params = [], currency = null) {
+    // If currency is provided, append it to the RPC server URL
+    const serverUrl = currency ? `${RPC_SERVER}/${currency.toLowerCase()}` : RPC_SERVER;
+    console.log('Making RPC call to', serverUrl, '- Method:', method, 'Params:', params);
 
     try {
-        const response = await fetch(RPC_SERVER, {
+        const response = await fetch(serverUrl, {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json',

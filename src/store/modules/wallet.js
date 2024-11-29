@@ -12,7 +12,8 @@ const state = {
     balance: null,
     seedConfirmed: false,
     isLoggedIn: false,
-    hasWallet: false
+    hasWallet: false,
+    isLoadingBalances: false
 };
 
 // Getters
@@ -277,6 +278,18 @@ const actions = {
             commit('setError', error.message);
             return false;
         }
+    },
+    
+    async updateBalances({ commit, state }) {
+        try {
+            commit('SET_LOADING_BALANCES', true);
+            const balances = await verusRPC.getAllCurrencyBalances(state.currentAddress);
+            commit('SET_BALANCES', balances);
+        } catch (error) {
+            console.error('Error updating balances:', error);
+        } finally {
+            commit('SET_LOADING_BALANCES', false);
+        }
     }
 };
 
@@ -325,6 +338,14 @@ const mutations = {
     
     setHasWallet(state, hasWallet) {
         state.hasWallet = hasWallet;
+    },
+    
+    SET_LOADING_BALANCES(state, loading) {
+        state.isLoadingBalances = loading;
+    },
+    
+    SET_BALANCES(state, balances) {
+        // Add this mutation to set balances
     }
 };
 

@@ -1,5 +1,6 @@
 <template>
     <div class="dashboard">
+        <LoadingBar :show="isLoadingBalances" />
         <div class="header">
             <h2>Wallet Dashboard</h2>
             <div class="actions">
@@ -27,7 +28,7 @@
                 </div>
                 <div class="balance">
                     <span class="label">Balance:</span>
-                    <span class="amount">{{ formatBalance(walletBalance) }} {{ currency }}</span>
+                    <span class="amount">{{ formatBalance(getBalance(currency)) }} {{ currency }}</span>
                 </div>
                 <div class="address">
                     <span class="label">Address:</span>
@@ -102,15 +103,18 @@
 <script>
 import { ref, computed, onMounted } from 'vue';
 import { useStore } from 'vuex';
+import { mapState } from 'vuex';
 import Settings from './Settings.vue';
 import CurrencySelector from './CurrencySelector.vue';
+import LoadingBar from './LoadingBar.vue';
 
 export default {
     name: 'WalletDashboard',
     
     components: {
         Settings,
-        CurrencySelector
+        CurrencySelector,
+        LoadingBar
     },
 
     setup() {
@@ -138,8 +142,13 @@ export default {
             return (balance.value / 100000000).toFixed(8);
         });
 
+        const getBalance = (currency) => {
+            return store.getters['currencies/getBalance'](currency);
+        };
+
         const formatBalance = (balance) => {
             if (balance === null || balance === undefined) return '0.00000000';
+            // Convert from satoshis to whole coins
             return (parseFloat(balance) / 100000000).toFixed(8);
         };
 
@@ -192,6 +201,16 @@ export default {
             }
         };
 
+        // Fetch initial balances
+        onMounted(async () => {
+            await store.dispatch('currencies/fetchBalances');
+        });
+
+        // Refresh balances periodically
+        setInterval(async () => {
+            await store.dispatch('currencies/fetchBalances');
+        }, 30000); // Every 30 seconds
+
         return {
             showSettings,
             showCurrencySelector,
@@ -210,7 +229,9 @@ export default {
             sending,
             sendTransaction,
             logout,
-            formatBalance
+            getBalance,
+            formatBalance,
+            isLoadingBalances: computed(() => store.state.wallet.isLoadingBalances)
         };
     }
 };
