@@ -3,6 +3,7 @@ import * as bitgo from '@bitgo/utxo-lib';
 import bip39 from 'bip39';
 import HDKey from 'hdkey';
 import BigInteger from 'bigi';
+import bcrypt from 'bcryptjs';
 
 // Get the BitGo library instance and ECPair
 const lib = bitgo.default;
@@ -141,6 +142,37 @@ export class WalletService {
         } catch (error) {
             console.error('Failed to recover wallet from WIF:', error);
             throw new Error('WIF recovery failed: ' + error.message);
+        }
+    }
+
+    /**
+     * Hash a password for secure storage
+     * @param {string} password The password to hash
+     * @returns {Promise<string>} The hashed password
+     */
+    static async hashPassword(password) {
+        try {
+            const salt = await bcrypt.genSalt(10);
+            const hash = await bcrypt.hash(password, salt);
+            return hash;
+        } catch (error) {
+            console.error('Failed to hash password:', error);
+            throw new Error('Password hashing failed');
+        }
+    }
+
+    /**
+     * Verify a password against a hash
+     * @param {string} password The password to verify
+     * @param {string} hash The hash to verify against
+     * @returns {Promise<boolean>} True if password matches, false otherwise
+     */
+    static async verifyPassword(password, hash) {
+        try {
+            return await bcrypt.compare(password, hash);
+        } catch (error) {
+            console.error('Failed to verify password:', error);
+            throw new Error('Password verification failed');
         }
     }
 }

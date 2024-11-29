@@ -3,12 +3,14 @@ import { computed, onMounted } from 'vue';
 import { useStore } from 'vuex';
 import WalletSetup from './components/WalletSetup.vue';
 import WalletDashboard from './components/WalletDashboard.vue';
+import Login from './components/Login.vue';
 
 export default {
   name: 'App',
   components: {
     WalletSetup,
-    WalletDashboard
+    WalletDashboard,
+    Login
   },
   setup() {
     const store = useStore();
@@ -16,6 +18,8 @@ export default {
     // Computed properties from store
     const isInitialized = computed(() => store.getters['wallet/isWalletInitialized']);
     const isSeedConfirmed = computed(() => store.getters['wallet/isSeedConfirmed']);
+    const hasWallet = computed(() => store.getters['wallet/hasWallet']);
+    const isLoggedIn = computed(() => store.getters['wallet/isLoggedIn']);
     const error = computed(() => store.getters['wallet/errorMessage']);
     const loading = computed(() => store.getters['wallet/isLoading']);
 
@@ -31,6 +35,8 @@ export default {
     return {
       isInitialized,
       isSeedConfirmed,
+      hasWallet,
+      isLoggedIn,
       error,
       loading
     };
@@ -48,8 +54,17 @@ export default {
       {{ error }}
     </div>
     <div v-else class="content">
-      <WalletSetup v-if="!isInitialized || !isSeedConfirmed" />
-      <WalletDashboard v-else />
+      <template v-if="hasWallet">
+        <template v-if="isLoggedIn">
+          <WalletDashboard />
+        </template>
+        <template v-else>
+          <Login />
+        </template>
+      </template>
+      <template v-else>
+        <WalletSetup />
+      </template>
     </div>
   </div>
 </template>

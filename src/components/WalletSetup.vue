@@ -80,8 +80,47 @@
         </div>
 
         <button 
-          @click="finalizeWalletCreation"
+          @click="proceedToPassword"
           :disabled="!isConfirmationValid || loading"
+          class="btn btn-primary"
+        >
+          Continue
+        </button>
+      </div>
+
+      <div v-if="newWalletStep === 3" class="password-setup">
+        <h2>Create Password</h2>
+        <p>Create a password to secure your wallet</p>
+
+        <div class="form-group">
+          <label>Password</label>
+          <input 
+            type="password"
+            v-model="password"
+            :disabled="loading"
+            placeholder="Enter password"
+            class="password-input"
+          >
+        </div>
+
+        <div class="form-group">
+          <label>Confirm Password</label>
+          <input 
+            type="password"
+            v-model="confirmPassword"
+            :disabled="loading"
+            placeholder="Confirm password"
+            class="password-input"
+          >
+        </div>
+
+        <div v-if="passwordError" class="error-message">
+          {{ passwordError }}
+        </div>
+
+        <button 
+          @click="finalizeWalletCreation"
+          :disabled="!isPasswordValid || loading"
           class="btn btn-primary"
         >
           Create Wallet
@@ -98,31 +137,65 @@
       </button>
     </div>
 
-    <div v-else class="mnemonic-input">
-      <button @click="showMnemonicInput = false" class="btn-back">
-        ← Back
-      </button>
-      
-      <h2>Import Wallet</h2>
+    <div v-if="showMnemonicInput" class="import-wallet">
+      <h2>Import Existing Wallet</h2>
       <p>Enter your 24-word recovery phrase</p>
-      
-      <form @submit.prevent="importWallet" class="import-form">
-        <textarea
-          v-model="mnemonic"
-          placeholder="Enter your recovery phrase (24 words)"
-          required
-          :disabled="loading"
-          rows="4"
-        ></textarea>
-        
+
+      <textarea
+        v-model="mnemonic"
+        :disabled="loading"
+        placeholder="Enter your recovery phrase (24 words)"
+        class="mnemonic-textarea"
+      ></textarea>
+
+      <div v-if="!isValidMnemonic && mnemonic" class="error-message">
+        Invalid recovery phrase
+      </div>
+
+      <div v-if="isValidMnemonic" class="password-setup">
+        <div class="form-group">
+          <label>Create Password</label>
+          <input 
+            type="password"
+            v-model="password"
+            :disabled="loading"
+            placeholder="Enter password"
+            class="password-input"
+          >
+        </div>
+
+        <div class="form-group">
+          <label>Confirm Password</label>
+          <input 
+            type="password"
+            v-model="confirmPassword"
+            :disabled="loading"
+            placeholder="Confirm password"
+            class="password-input"
+          >
+        </div>
+
+        <div v-if="passwordError" class="error-message">
+          {{ passwordError }}
+        </div>
+      </div>
+
+      <div class="button-group">
         <button 
-          type="submit" 
-          :disabled="loading || !isValidMnemonic"
+          @click="importWallet"
+          :disabled="!isValidMnemonic || !isPasswordValid || loading"
           class="btn btn-primary"
         >
           Import Wallet
         </button>
-      </form>
+        <button 
+          @click="cancelImport" 
+          :disabled="loading"
+          class="btn btn-secondary"
+        >
+          Cancel
+        </button>
+      </div>
     </div>
 
     <div v-if="error" class="error-message">
@@ -157,6 +230,9 @@ export default {
     const seedPhrase = ref('');
     const confirmationWords = ref(['', '', '', '']);
     const confirmationIndices = ref([]);
+    const password = ref('');
+    const confirmPassword = ref('');
+    const passwordError = ref('');
 
     const isValidMnemonic = computed(() => {
       return bip39.validateMnemonic(mnemonic.value);
@@ -171,6 +247,19 @@ export default {
         const targetWord = seedPhraseArray.value[confirmationIndices.value[index]];
         return word.toLowerCase().trim() === targetWord.toLowerCase();
       });
+    });
+
+    const isPasswordValid = computed(() => {
+      if (password.value.length < 8) {
+        passwordError.value = 'Password must be at least 8 characters';
+        return false;
+      }
+      if (password.value !== confirmPassword.value) {
+        passwordError.value = 'Passwords do not match';
+        return false;
+      }
+      passwordError.value = '';
+      return true;
     });
 
     function generateConfirmationIndices() {
@@ -215,6 +304,14 @@ export default {
       error.value = '';
     }
 
+    function proceedToPassword() {
+      if (!isConfirmationValid.value) {
+        error.value = 'Please confirm your recovery phrase correctly';
+        return;
+      }
+      newWalletStep.value = 3;
+    }
+
     function goBackInSetup() {
       if (newWalletStep.value > 1) {
         newWalletStep.value--;
@@ -227,8 +324,7 @@ export default {
     }
 
     async function finalizeWalletCreation() {
-      if (!isConfirmationValid.value) {
-        error.value = 'Incorrect confirmation words. Please check your recovery phrase.';
+      if (!isPasswordValid.value) {
         return;
       }
 
@@ -237,7 +333,10 @@ export default {
         loadingText.value = 'Creating your wallet...';
         error.value = '';
         
-        await store.dispatch('wallet/generateNewWallet', seedPhrase.value);
+        await store.dispatch('wallet/generateNewWallet', {
+          mnemonic: seedPhrase.value,
+          password: password.value
+        });
       } catch (err) {
         error.value = err.message || 'Failed to create wallet';
       } finally {
@@ -246,8 +345,7 @@ export default {
     }
 
     async function importWallet() {
-      if (!isValidMnemonic.value) {
-        error.value = 'Invalid recovery phrase';
+      if (!isValidMnemonic.value || !isPasswordValid.value) {
         return;
       }
 
@@ -256,12 +354,23 @@ export default {
         loadingText.value = 'Importing your wallet...';
         error.value = '';
         
-        await store.dispatch('wallet/recoverFromMnemonic', mnemonic.value);
+        await store.dispatch('wallet/recoverFromMnemonic', {
+          mnemonic: mnemonic.value,
+          password: password.value
+        });
       } catch (err) {
         error.value = err.message || 'Failed to import wallet';
       } finally {
         loading.value = false;
       }
+    }
+
+    function cancelImport() {
+      showMnemonicInput.value = false;
+      mnemonic.value = '';
+      password.value = '';
+      confirmPassword.value = '';
+      passwordError.value = '';
     }
 
     return {
@@ -278,12 +387,18 @@ export default {
       confirmationIndices,
       isValidMnemonic,
       isConfirmationValid,
+      isPasswordValid,
+      password,
+      confirmPassword,
+      passwordError,
       startNewWalletFlow,
       proceedToConfirmation,
       validateConfirmation,
+      proceedToPassword,
       goBackInSetup,
       finalizeWalletCreation,
-      importWallet
+      importWallet,
+      cancelImport
     };
   }
 };
@@ -503,6 +618,36 @@ h1, h2 {
   outline: none;
   border-color: var(--primary-color);
   box-shadow: 0 0 0 2px rgba(52, 152, 219, 0.2);
+}
+
+.password-input {
+  width: 100%;
+  padding: 0.75rem;
+  border: 1px solid var(--border-color);
+  border-radius: 0.5rem;
+  background-color: var(--input-background);
+  font-size: 1rem;
+  margin-bottom: 1rem;
+}
+
+.password-setup {
+  margin-top: 1.5rem;
+}
+
+.form-group {
+  margin-bottom: 1.5rem;
+}
+
+.form-group label {
+  display: block;
+  margin-bottom: 0.5rem;
+  font-weight: 500;
+}
+
+.button-group {
+  display: flex;
+  gap: 1rem;
+  margin-top: 1rem;
 }
 
 @keyframes spin {
