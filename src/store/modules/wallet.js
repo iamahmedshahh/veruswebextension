@@ -254,6 +254,29 @@ const actions = {
             commit('setError', error.message);
             throw error;
         }
+    },
+    
+    async verifyPassword({ commit }, password) {
+        try {
+            commit('clearError');
+            
+            // Get stored wallet data
+            const data = await browser.storage.local.get('wallet');
+            if (!data.wallet) {
+                throw new Error('No wallet found');
+            }
+            
+            // Verify password
+            const isValid = await WalletService.verifyPassword(password, data.wallet.passwordHash);
+            if (!isValid) {
+                throw new Error('Invalid password');
+            }
+            
+            return true;
+        } catch (error) {
+            commit('setError', error.message);
+            return false;
+        }
     }
 };
 

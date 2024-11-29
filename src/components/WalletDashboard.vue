@@ -2,7 +2,10 @@
   <div class="wallet-dashboard">
     <div class="header">
       <h1>Verus Wallet</h1>
-      <button @click="logout" class="btn btn-secondary">Logout</button>
+      <div class="header-actions">
+        <button @click="showSettings = true" class="btn btn-secondary">Settings</button>
+        <button @click="logout" class="btn btn-secondary">Logout</button>
+      </div>
     </div>
 
     <div class="card balance-card">
@@ -62,20 +65,32 @@
         </div>
       </div>
     </div>
+
+    <!-- Settings Modal -->
+    <div v-if="showSettings" class="modal">
+      <div class="modal-content settings-modal">
+        <Settings @close="showSettings = false" />
+      </div>
+    </div>
   </div>
 </template>
 
 <script>
 import { ref, computed } from 'vue';
 import { useStore } from 'vuex';
+import Settings from './Settings.vue';
 
 export default {
   name: 'WalletDashboard',
+  components: {
+    Settings
+  },
   
   setup() {
     const store = useStore();
     const showSendModal = ref(false);
     const showReceiveModal = ref(false);
+    const showSettings = ref(false);
     const sending = ref(false);
     const sendForm = ref({
       to: '',
@@ -131,6 +146,7 @@ export default {
       formattedBalance,
       showSendModal,
       showReceiveModal,
+      showSettings,
       sendForm,
       sending,
       copyAddress,
@@ -151,6 +167,11 @@ export default {
   justify-content: space-between;
   align-items: center;
   margin-bottom: 2rem;
+}
+
+.header-actions {
+  display: flex;
+  gap: 1rem;
 }
 
 .header h1 {
@@ -213,26 +234,44 @@ export default {
   position: fixed;
   top: 0;
   left: 0;
-  right: 0;
-  bottom: 0;
+  width: 100%;
+  height: 100%;
   background: rgba(0, 0, 0, 0.5);
   display: flex;
-  align-items: center;
   justify-content: center;
+  align-items: center;
+  z-index: 1000;
 }
 
 .modal-content {
   background: white;
-  padding: 2rem;
   border-radius: 0.5rem;
   width: 90%;
-  max-width: 500px;
+  max-width: 600px;
+  max-height: 90vh;
+  overflow-y: auto;
+  position: relative;
 }
 
-.modal-actions {
-  display: flex;
-  gap: 1rem;
-  margin-top: 1.5rem;
+.settings-modal {
+  width: 100%;
+  max-width: 100%;
+  height: 100%;
+  max-height: 100vh;
+  margin: 0;
+  border-radius: 0;
+  overflow: hidden;
+}
+
+@media (min-width: 768px) {
+  .settings-modal {
+    width: 90%;
+    max-width: 600px;
+    height: auto;
+    max-height: 90vh;
+    margin: 2rem auto;
+    border-radius: 0.5rem;
+  }
 }
 
 .qr-code {
@@ -241,5 +280,11 @@ export default {
   margin: 2rem 0;
   padding: 1rem;
   background: white;
+}
+
+.modal-actions {
+  display: flex;
+  gap: 1rem;
+  margin-top: 1.5rem;
 }
 </style>
