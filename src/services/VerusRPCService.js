@@ -100,10 +100,10 @@ class VerusRPCService {
         }
 
         try {
-            return await makeRPCCall('getinfo');
+            return await makeRPCCall('getnetworkinfo');
         } catch (error) {
             console.error('Failed to get network info:', error);
-            throw error;
+            throw new Error('Failed to fetch network info');
         }
     }
 
@@ -156,6 +156,29 @@ class VerusRPCService {
         } catch (error) {
             console.error('Failed to send transaction:', error);
             throw new Error(error.message || 'Failed to send transaction');
+        }
+    }
+
+    async listCurrencies() {
+        if (!this.initialized) {
+            await this.initialize();
+        }
+
+        try {
+            const result = await makeRPCCall('listcurrencies');
+            // Extract currency names from the response
+            if (Array.isArray(result)) {
+                return result.map(currency => {
+                    if (currency.currencydefinition && currency.currencydefinition.name) {
+                        return currency.currencydefinition.name;
+                    }
+                    return null;
+                }).filter(name => name !== null);
+            }
+            return ['vrsctest']; // Fallback to default
+        } catch (error) {
+            console.error('Failed to list currencies:', error);
+            throw new Error('Failed to fetch currencies');
         }
     }
 }
