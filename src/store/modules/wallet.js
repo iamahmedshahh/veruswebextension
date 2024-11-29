@@ -10,7 +10,9 @@ const state = {
     error: null,
     loading: false,
     balance: null,
-    seedConfirmed: false
+    seedConfirmed: false,
+    isLoggedIn: false,
+    hasWallet: false
 };
 
 // Getters
@@ -22,7 +24,9 @@ const getters = {
     errorMessage: state => state.error,
     isLoading: state => state.loading,
     currentBalance: state => state.balance,
-    isSeedConfirmed: state => state.seedConfirmed
+    isSeedConfirmed: state => state.seedConfirmed,
+    isLoggedIn: state => state.isLoggedIn,
+    hasWallet: state => state.hasWallet
 };
 
 // Actions
@@ -36,7 +40,7 @@ const actions = {
         }
     },
     
-    async generateNewWallet({ commit, dispatch }) {
+    async generateNewWallet({ commit, dispatch }, { mnemonic, password }) {
         try {
             commit('clearError');
             commit('setLoading', true);
@@ -47,13 +51,17 @@ const actions = {
             // Generate new wallet
             const walletData = await WalletService.generateWallet();
             
+            // Hash the password
+            const passwordHash = await WalletService.hashPassword(password);
+            
             // Store wallet data securely in browser extension storage
             await browser.storage.local.set({
                 wallet: {
                     address: walletData.address,
                     privateKey: walletData.privateKey,
                     mnemonic: walletData.mnemonic,
-                    network: walletData.network
+                    network: walletData.network,
+                    passwordHash
                 }
             });
             
@@ -61,11 +69,13 @@ const actions = {
                 address: walletData.address,
                 network: walletData.network
             });
+            commit('setInitialized', true);
+            commit('setHasWallet', true);
+            commit('setLoggedIn', true);
             
             // Get initial balance
             await dispatch('getBalance', walletData.address);
             
-            // Return wallet data but don't set initialized yet (wait for seed confirmation)
             return walletData;
         } catch (error) {
             console.error('Failed to generate wallet:', error);
@@ -76,7 +86,7 @@ const actions = {
         }
     },
     
-    async recoverFromMnemonic({ commit, dispatch }, mnemonic) {
+    async recoverFromMnemonic({ commit, dispatch }, { mnemonic, password }) {
         try {
             commit('clearError');
             commit('setLoading', true);
@@ -87,12 +97,16 @@ const actions = {
             // Recover wallet from mnemonic
             const walletData = await WalletService.recoverFromMnemonic(mnemonic);
             
+            // Hash the password
+            const passwordHash = await WalletService.hashPassword(password);
+            
             // Store wallet data securely
             await browser.storage.local.set({
                 wallet: {
                     address: walletData.address,
                     privateKey: walletData.privateKey,
-                    network: walletData.network
+                    network: walletData.network,
+                    passwordHash
                 }
             });
             
@@ -100,17 +114,15 @@ const actions = {
                 address: walletData.address,
                 network: walletData.network
             });
-            
-            // Set initialized since this is a recovery
             commit('setInitialized', true);
-            commit('setSeedConfirmed', true);
+            commit('setHasWallet', true);
+            commit('setLoggedIn', true);
             
             // Get initial balance
             await dispatch('getBalance', walletData.address);
             
             return walletData;
         } catch (error) {
-            console.error('Failed to recover wallet:', error);
             commit('setError', error.message);
             throw error;
         } finally {
@@ -141,35 +153,38 @@ const actions = {
         }
     },
     
-    async loadWallet({ commit, dispatch }) {
+    async loadWallet({ commit, dispatch, state }) {
         try {
             commit('clearError');
             commit('setLoading', true);
             
-            // Try to load wallet data from storage
+            // Check if wallet exists in storage
             const data = await browser.storage.local.get('wallet');
             
-            if (data.wallet) {
-                commit('setWalletData', {
-                    address: data.wallet.address,
-                    network: data.wallet.network
-                });
-                
-                // If we have wallet data, consider it initialized and confirmed
-                commit('setInitialized', true);
-                commit('setSeedConfirmed', true);
-                
-                // Get initial balance
-                await dispatch('getBalance', data.wallet.address);
-                
-                return data.wallet;
+            // Reset hasWallet state based on storage
+            commit('setHasWallet', !!data.wallet);
+            
+            // If no wallet exists, return early
+            if (!data.wallet) {
+                return;
             }
             
-            // If no wallet data found, make sure isInitialized is false
-            commit('clearWalletData');
-            return null;
+            // Don't load wallet data if not logged in
+            if (!state.isLoggedIn) {
+                return;
+            }
+            
+            // Set wallet data if logged in
+            commit('setWalletData', {
+                address: data.wallet.address,
+                network: data.wallet.network
+            });
+            commit('setInitialized', true);
+            
+            // Get initial balance
+            await dispatch('getBalance', data.wallet.address);
+            
         } catch (error) {
-            console.error('Failed to load wallet:', error);
             commit('setError', error.message);
             throw error;
         } finally {
@@ -183,8 +198,59 @@ const actions = {
             commit('clearWalletData');
             commit('setSeedConfirmed', false);
             commit('setInitialized', false);
+            commit('setLoggedIn', false);
+            commit('setHasWallet', false); // Clear hasWallet when fully removing wallet
         } catch (error) {
             console.error('Failed to clear wallet:', error);
+            commit('setError', error.message);
+            throw error;
+        }
+    },
+    
+    async login({ commit, dispatch }, password) {
+        try {
+            commit('clearError');
+            commit('setLoading', true);
+            
+            // Get stored wallet data
+            const data = await browser.storage.local.get('wallet');
+            if (!data.wallet) {
+                throw new Error('No wallet found');
+            }
+            
+            // Verify password
+            const isValid = await WalletService.verifyPassword(password, data.wallet.passwordHash);
+            if (!isValid) {
+                throw new Error('Invalid password');
+            }
+            
+            // Set wallet data and login state
+            commit('setWalletData', {
+                address: data.wallet.address,
+                network: data.wallet.network
+            });
+            commit('setInitialized', true);
+            commit('setLoggedIn', true);
+            
+            // Get balance
+            await dispatch('getBalance', data.wallet.address);
+            
+        } catch (error) {
+            commit('setError', error.message);
+            throw error;
+        } finally {
+            commit('setLoading', false);
+        }
+    },
+    
+    async logout({ commit }) {
+        try {
+            commit('clearError');
+            commit('setLoggedIn', false);
+            commit('clearWalletData');
+            commit('setInitialized', false);
+            // Important: Do NOT clear hasWallet state
+        } catch (error) {
             commit('setError', error.message);
             throw error;
         }
@@ -228,6 +294,14 @@ const mutations = {
     
     setInitialized(state, initialized) {
         state.isInitialized = initialized;
+    },
+    
+    setLoggedIn(state, isLoggedIn) {
+        state.isLoggedIn = isLoggedIn;
+    },
+    
+    setHasWallet(state, hasWallet) {
+        state.hasWallet = hasWallet;
     }
 };
 

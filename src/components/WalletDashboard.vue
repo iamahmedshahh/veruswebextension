@@ -120,7 +120,7 @@ export default {
 
     async function logout() {
       try {
-        await store.dispatch('wallet/clearWallet');
+        await store.dispatch('wallet/logout');
       } catch (error) {
         console.error('Failed to logout:', error);
       }
