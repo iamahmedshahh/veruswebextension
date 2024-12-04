@@ -3,60 +3,102 @@ import { testConnection } from './utils/verus-rpc';
 
 console.log('Background script loaded');
 
-// Initialize connection
-testConnection()
-  .then(isConnected => {
+// Keep track of the extension's state
+const extensionState = {
+  isConnected: false,
+  lastConnection: null,
+  isInitialized: false,
+  hasWallet: false,
+  isLoggedIn: false
+};
+
+// Initialize connection and state
+async function initializeState() {
+  try {
+    console.log('Initializing extension state...');
+    
+    // Check connection
+    const isConnected = await testConnection();
+    extensionState.isConnected = isConnected;
+    extensionState.lastConnection = Date.now();
+    
     console.log('RPC connection status:', isConnected ? 'Connected' : 'Failed to connect');
-  })
-  .catch(error => {
-    console.error('RPC connection error:', error);
-  });
+    
+    // Load wallet state
+    const data = await browser.storage.local.get(['wallet', 'isLoggedIn', 'hasWallet']);
+    
+    // Update extension state
+    extensionState.hasWallet = !!data.wallet;
+    extensionState.isLoggedIn = !!data.isLoggedIn;
+    extensionState.isInitialized = true;
+    
+    if (data.wallet) {
+      // Preserve wallet and login state
+      await browser.storage.local.set({ 
+        wallet: data.wallet,
+        hasWallet: true,
+        isInitialized: true,
+        isLoggedIn: !!data.isLoggedIn
+      });
+    }
+
+    console.log('Extension state initialized:', extensionState);
+    return { 
+      success: true, 
+      hasWallet: extensionState.hasWallet,
+      isLoggedIn: extensionState.isLoggedIn
+    };
+  } catch (error) {
+    console.error('Initialization error:', error);
+    extensionState.isConnected = false;
+    extensionState.isInitialized = false;
+    throw error;
+  }
+}
 
 // Handle messages from the popup
-browser.runtime.onMessage.addListener((request, sender, sendResponse) => {
+browser.runtime.onMessage.addListener(async (request, sender) => {
   console.log('Background script received message:', request);
   
-  // Create a promise for the response
-  const responsePromise = (async () => {
-    try {
-      switch (request.type) {
-        case 'CHECK_CONNECTION':
-          console.log('Checking connection...');
-          const isConnected = await testConnection();
-          console.log('Connection check result:', isConnected);
-          return { isConnected };
-        
-        default:
-          throw new Error(`Unknown message type: ${request.type}`);
-      }
-    } catch (error) {
-      console.error('Error handling message:', error);
-      return { error: error.message };
+  switch (request.type) {
+    case 'INITIALIZE':
+      return initializeState();
+    case 'CHECK_SESSION':
+      return {
+        isActive: extensionState.isLoggedIn
+      };
+    case 'SET_LOGIN_STATE':
+      extensionState.isLoggedIn = request.isLoggedIn;
+      await browser.storage.local.set({ isLoggedIn: request.isLoggedIn });
+      return { success: true };
+    default:
+      return { error: 'Unknown message type' };
+  }
+});
+
+// Initialize state when extension starts
+browser.runtime.onStartup.addListener(async () => {
+  await initializeState();
+});
+
+// Handle window removal
+browser.windows.onRemoved.addListener(async (windowId) => {
+  const windows = await browser.windows.getAll();
+  if (windows.length === 0) {
+    // Preserve wallet and login state
+    const data = await browser.storage.local.get(['wallet', 'isLoggedIn']);
+    if (data.wallet) {
+      await browser.storage.local.set({
+        wallet: data.wallet,
+        hasWallet: true,
+        isInitialized: true,
+        isLoggedIn: data.isLoggedIn // Preserve login state
+      });
     }
-  })();
-  
-  // Return true to indicate we will send a response asynchronously
-  return responsePromise;
+  }
 });
 
-// Initialize the service worker
-self.addEventListener('activate', event => {
-  console.log('Service worker activated');
-  event.waitUntil(clients.claim());
-});
-
-// Keep the service worker alive
-self.addEventListener('install', event => {
-  console.log('Service worker installed');
-  event.waitUntil(self.skipWaiting());
-});
-
-// Handle errors
-self.addEventListener('error', event => {
-  console.error('Service worker error:', event.error);
-});
-
-// Handle unhandled rejections
-self.addEventListener('unhandledrejection', event => {
-  console.error('Unhandled promise rejection:', event.reason);
+// Initialize on install
+browser.runtime.onInstalled.addListener(async () => {
+  await initializeState();
 });

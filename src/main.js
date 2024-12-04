@@ -1,4 +1,5 @@
 // Import polyfills first
+import browser from 'webextension-polyfill';
 
 import { createApp } from 'vue';
 import App from './App.vue';

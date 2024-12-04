@@ -1,100 +1,80 @@
 <template>
     <div class="dashboard">
         <LoadingBar :show="isLoadingBalances" />
-        <div class="header">
-            <h2>Wallet Dashboard</h2>
-            <div class="actions">
-                <button class="btn-secondary" @click="showCurrencySelector = true">
-                    Add Currency
-                </button>
-                <button class="btn-secondary" @click="showSettings = true">
-                    Settings
-                </button>
-            </div>
+        
+        <WalletHeader 
+            :is-locked="isLocked"
+            @settings-click="showSettings = true"
+        />
+
+        <div v-if="loading" class="loading-container">
+            <div class="loading-spinner"></div>
+            <p>Loading wallet data...</p>
         </div>
 
-        <div class="currency-cards">
-            <div v-for="currency in selectedCurrencies" :key="currency" class="currency-card">
-                <div class="currency-header">
-                    <h3>{{ currency }}</h3>
-                    <button 
-                        v-if="selectedCurrencies.length > 1"
-                        class="btn-remove" 
-                        @click="removeCurrency(currency)"
-                        title="Remove currency"
-                    >
-                        &times;
-                    </button>
-                </div>
-                <div class="balance">
-                    <span class="label">Balance:</span>
-                    <span class="amount">{{ formatBalance(getBalance(currency)) }} {{ currency }}</span>
-                </div>
-                <div class="address">
-                    <span class="label">Address:</span>
-                    <div class="address-value">
-                        {{ walletAddress }}
-                        <button class="btn-copy" @click="copyToClipboard(walletAddress)" title="Copy address">
-                            📋
+        <div v-else class="dashboard-content">
+            <div class="currency-cards">
+                <div 
+                    v-for="currency in selectedCurrencies" 
+                    :key="currency" 
+                    class="currency-card"
+                >
+                    <div class="card-header">
+                        <h3>{{ currency }}</h3>
+                        <button 
+                            class="remove-currency" 
+                            @click="removeCurrency(currency)"
+                            v-if="currency !== 'VRSCTEST'"
+                        >
+                            &times;
                         </button>
                     </div>
-                </div>
-                <div class="buttons">
-                    <button class="btn-primary" @click="showSendModal = true">Send</button>
-                    <button class="btn-secondary" @click="showReceiveModal = true">Receive</button>
-                </div>
-            </div>
-        </div>
-
-        <!-- Currency Selector Modal -->
-        <div v-if="showCurrencySelector" class="modal">
-            <div class="modal-content">
-                <CurrencySelector @close="showCurrencySelector = false" />
-            </div>
-        </div>
-
-        <!-- Settings Modal -->
-        <div v-if="showSettings" class="modal">
-            <div class="modal-content settings-modal">
-                <Settings @close="showSettings = false" />
-            </div>
-        </div>
-
-        <!-- Send Modal -->
-        <div v-if="showSendModal" class="modal">
-            <div class="modal-content">
-                <h2>Send {{ selectedCurrencies[0] }}</h2>
-                <form @submit.prevent="sendTransaction">
-                    <div class="form-group">
-                        <label>Recipient Address</label>
-                        <input v-model="sendForm.to" type="text" required class="form-input" />
+                    <div class="balance-section">
+                        <div class="balance">
+                            <span class="balance-label">Balance:</span>
+                            <span class="balance-amount">{{ formatBalance(getBalance(currency)) }}</span>
+                        </div>
+                        <div class="address-section">
+                            <span class="address-label">Address:</span>
+                            <div class="address-value">
+                                <span class="address">{{ address }}</span>
+                                <button 
+                                    class="copy-button"
+                                    @click="copyToClipboard(address)"
+                                    title="Copy address"
+                                >
+                                    📋
+                                </button>
+                            </div>
+                        </div>
                     </div>
-                    <div class="form-group">
-                        <label>Amount ({{ selectedCurrencies[0] }})</label>
-                        <input v-model="sendForm.amount" type="number" step="0.00000001" required class="form-input" />
-                    </div>
-                    <div class="modal-actions">
-                        <button type="button" @click="showSendModal = false" class="btn btn-secondary">Cancel</button>
-                        <button type="submit" class="btn btn-primary" :disabled="sending">Send</button>
-                    </div>
-                </form>
+                </div>
+
+                <div 
+                    v-if="canAddMoreCurrencies" 
+                    class="add-currency-card"
+                    @click="showCurrencySelector = true"
+                >
+                    <div class="add-icon">+</div>
+                    <span>Add Currency</span>
+                </div>
             </div>
         </div>
 
-        <!-- Receive Modal -->
-        <div v-if="showReceiveModal" class="modal">
-            <div class="modal-content">
-                <h2>Receive {{ selectedCurrencies[0] }}</h2>
-                <div class="qr-code">
-                    <!-- Add QR code component here -->
-                </div>
-                <div class="address-container" @click="copyAddress">
-                    {{ address }}
-                    <span class="copy-icon">📋</span>
-                </div>
-                <div class="modal-actions">
-                    <button @click="showReceiveModal = false" class="btn btn-secondary">Close</button>
-                </div>
+        <div v-if="showSettings" class="modal-overlay">
+            <div class="modal-container">
+                <Settings 
+                    @close="showSettings = false"
+                />
+            </div>
+        </div>
+
+        <div v-if="showCurrencySelector" class="modal-overlay">
+            <div class="modal-container">
+                <CurrencySelector 
+                    @close="showCurrencySelector = false"
+                    @currency-selected="handleCurrencySelected"
+                />
             </div>
         </div>
     </div>
@@ -103,135 +83,81 @@
 <script>
 import { ref, computed, onMounted } from 'vue';
 import { useStore } from 'vuex';
-import { mapState } from 'vuex';
+import WalletHeader from './WalletHeader.vue';
+import LoadingBar from './LoadingBar.vue';
 import Settings from './Settings.vue';
 import CurrencySelector from './CurrencySelector.vue';
-import LoadingBar from './LoadingBar.vue';
 
 export default {
     name: 'WalletDashboard',
     
     components: {
+        WalletHeader,
+        LoadingBar,
         Settings,
-        CurrencySelector,
-        LoadingBar
+        CurrencySelector
     },
 
     setup() {
         const store = useStore();
         const showSettings = ref(false);
         const showCurrencySelector = ref(false);
-        const showSendModal = ref(false);
-        const showReceiveModal = ref(false);
-        const sending = ref(false);
-        const sendForm = ref({
-            to: '',
-            amount: ''
-        });
 
-        // Get currencies from store
-        const selectedCurrencies = computed(() => store.getters['currencies/getSelectedCurrencies']);
-
-        // Your existing computed properties
-        const walletAddress = computed(() => store.state.wallet.address);
-        const walletBalance = computed(() => store.state.wallet.balance);
-        const address = computed(() => store.getters['wallet/currentAddress']);
-        const balance = computed(() => store.getters['wallet/currentBalance']);
-        const formattedBalance = computed(() => {
-            if (balance.value === null) return '0.00000000';
-            return (balance.value / 100000000).toFixed(8);
-        });
+        const loading = computed(() => store.state.wallet.loading);
+        const error = computed(() => store.state.wallet.error);
+        const address = computed(() => store.state.wallet.address);
+        const isLocked = computed(() => store.state.wallet.isLocked);
+        const selectedCurrencies = computed(() => store.state.currencies.selectedCurrencies);
+        const balances = computed(() => store.state.currencies.balances);
+        const isLoadingBalances = computed(() => store.state.currencies.loading);
+        const canAddMoreCurrencies = computed(() => store.getters['currencies/canAddMoreCurrencies']);
 
         const getBalance = (currency) => {
-            return store.getters['currencies/getBalance'](currency);
+            return balances.value[currency] || 0;
         };
 
         const formatBalance = (balance) => {
-            if (balance === null || balance === undefined) return '0.00000000';
-            // Convert from satoshis to whole coins
-            return (parseFloat(balance) / 100000000).toFixed(8);
+            return balance.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 8 });
+        };
+
+        const copyToClipboard = (text) => {
+            navigator.clipboard.writeText(text);
+            // Could add a toast notification here
+        };
+
+        const handleCurrencySelected = (currency) => {
+            store.dispatch('currencies/selectCurrency', currency);
+            showCurrencySelector.value = false;
         };
 
         const removeCurrency = (currency) => {
             store.dispatch('currencies/unselectCurrency', currency);
         };
 
-        const copyToClipboard = async (text) => {
-            try {
-                await navigator.clipboard.writeText(text);
-                // You might want to show a success toast here
-            } catch (err) {
-                console.error('Failed to copy:', err);
-            }
-        };
-
-        const copyAddress = async () => {
-            try {
-                await navigator.clipboard.writeText(address.value);
-                // TODO: Show success toast
-            } catch (error) {
-                console.error('Failed to copy address:', error);
-            }
-        };
-
-        const sendTransaction = async () => {
-            if (!sendForm.value.to || !sendForm.value.amount) return;
-            
-            try {
-                sending.value = true;
-                // TODO: Implement send transaction
-                await store.dispatch('wallet/sendTransaction', {
-                    to: sendForm.value.to,
-                    amount: parseFloat(sendForm.value.amount)
-                });
-                showSendModal.value = false;
-                sendForm.value = { to: '', amount: '' };
-            } catch (error) {
-                console.error('Failed to send transaction:', error);
-            } finally {
-                sending.value = false;
-            }
-        };
-
-        const logout = async () => {
-            try {
-                await store.dispatch('wallet/logout');
-            } catch (error) {
-                console.error('Failed to logout:', error);
-            }
-        };
-
-        // Fetch initial balances
         onMounted(async () => {
-            await store.dispatch('currencies/fetchBalances');
+            try {
+                await store.dispatch('wallet/loadWalletData');
+                await store.dispatch('currencies/fetchAvailableCurrencies');
+            } catch (error) {
+                console.error('Failed to load initial data:', error);
+            }
         });
 
-        // Refresh balances periodically
-        setInterval(async () => {
-            await store.dispatch('currencies/fetchBalances');
-        }, 30000); // Every 30 seconds
-
         return {
+            loading,
+            error,
+            address,
+            isLocked,
             showSettings,
             showCurrencySelector,
-            showSendModal,
-            showReceiveModal,
             selectedCurrencies,
-            walletAddress,
-            walletBalance,
-            address,
-            balance,
-            formattedBalance,
-            removeCurrency,
-            copyToClipboard,
-            copyAddress,
-            sendForm,
-            sending,
-            sendTransaction,
-            logout,
+            isLoadingBalances,
+            canAddMoreCurrencies,
             getBalance,
             formatBalance,
-            isLoadingBalances: computed(() => store.state.wallet.isLoadingBalances)
+            copyToClipboard,
+            handleCurrencySelected,
+            removeCurrency
         };
     }
 };
@@ -239,52 +165,90 @@ export default {
 
 <style scoped>
 .dashboard {
-    padding: 1.5rem;
+    height: 100%;
+    padding: 1rem;
+    display: flex;
+    flex-direction: column;
 }
 
-.header {
+.modal-overlay {
+    position: fixed;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background: rgba(0, 0, 0, 0.5);
     display: flex;
-    justify-content: space-between;
     align-items: center;
-    margin-bottom: 2rem;
+    justify-content: center;
+    z-index: 1000;
 }
 
-.header h2 {
-    margin: 0;
+.modal-container {
+    background: white;
+    border-radius: 8px;
+    width: 90%;
+    max-width: 500px;
+    max-height: 90vh;
+    overflow-y: auto;
+    box-shadow: 0 2px 10px rgba(0, 0, 0, 0.1);
 }
 
-.actions {
+.loading-container {
+    flex: 1;
     display: flex;
-    gap: 1rem;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+}
+
+.loading-spinner {
+    border: 4px solid var(--border-color);
+    border-top: 4px solid var(--primary-color);
+    border-radius: 50%;
+    width: 40px;
+    height: 40px;
+    animation: spin 1s linear infinite;
+    margin-bottom: 1rem;
+}
+
+@keyframes spin {
+    0% { transform: rotate(0deg); }
+    100% { transform: rotate(360deg); }
+}
+
+.dashboard-content {
+    flex: 1;
+    overflow-y: auto;
+    padding: 1rem 0;
 }
 
 .currency-cards {
     display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
-    gap: 1.5rem;
-    margin-bottom: 2rem;
+    grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+    gap: 1rem;
 }
 
 .currency-card {
-    background: white;
+    background: var(--card-bg);
+    border: 1px solid var(--border-color);
     border-radius: 0.5rem;
-    padding: 1.5rem;
-    box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+    padding: 1rem;
 }
 
-.currency-header {
+.card-header {
     display: flex;
     justify-content: space-between;
     align-items: center;
     margin-bottom: 1rem;
 }
 
-.currency-header h3 {
+.card-header h3 {
     margin: 0;
     font-size: 1.25rem;
 }
 
-.btn-remove {
+.remove-currency {
     background: none;
     border: none;
     font-size: 1.25rem;
@@ -293,132 +257,85 @@ export default {
     color: var(--text-secondary);
 }
 
-.balance {
-    margin-bottom: 1rem;
+.remove-currency:hover {
+    color: var(--error-color);
 }
 
-.label {
+.balance-section {
+    display: flex;
+    flex-direction: column;
+    gap: 0.75rem;
+}
+
+.balance {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+}
+
+.balance-label {
+    color: var(--text-secondary);
+}
+
+.balance-amount {
+    font-weight: 600;
+    font-size: 1.125rem;
+}
+
+.address-section {
+    display: flex;
+    flex-direction: column;
+    gap: 0.25rem;
+}
+
+.address-label {
     color: var(--text-secondary);
     font-size: 0.875rem;
-}
-
-.amount {
-    display: block;
-    font-size: 1.5rem;
-    font-weight: bold;
-    margin-top: 0.25rem;
-}
-
-.address {
-    margin-bottom: 1.5rem;
 }
 
 .address-value {
     display: flex;
     align-items: center;
     gap: 0.5rem;
-    margin-top: 0.25rem;
-    font-family: monospace;
-    font-size: 0.875rem;
-    word-break: break-all;
+    background: var(--bg-secondary);
+    padding: 0.5rem;
+    border-radius: 0.25rem;
 }
 
-.btn-copy {
+.address {
+    font-family: monospace;
+    font-size: 0.875rem;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.copy-button {
     background: none;
     border: none;
     cursor: pointer;
     padding: 0.25rem;
+    font-size: 1rem;
 }
 
-.buttons {
-    display: flex;
-    gap: 1rem;
-}
-
-.btn-primary,
-.btn-secondary {
-    flex: 1;
-    padding: 0.75rem;
-    border: none;
-    border-radius: 0.375rem;
-    cursor: pointer;
-    font-size: 0.875rem;
-}
-
-.btn-primary {
-    background-color: var(--primary-color);
-    color: white;
-}
-
-.btn-secondary {
-    background-color: var(--secondary-color);
-    color: white;
-}
-
-.modal {
-    position: fixed;
-    top: 0;
-    left: 0;
-    width: 100%;
-    height: 100%;
-    background: rgba(0, 0, 0, 0.5);
-    display: flex;
-    justify-content: center;
-    align-items: center;
-    z-index: 1000;
-}
-
-.modal-content {
-    background: white;
+.add-currency-card {
+    border: 2px dashed var(--border-color);
     border-radius: 0.5rem;
-    width: 90%;
-    max-width: 600px;
-    max-height: 90vh;
-    overflow-y: auto;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    padding: 2rem;
+    cursor: pointer;
+    transition: all 0.2s ease;
 }
 
-.settings-modal {
-    width: 100%;
-    max-width: 100%;
-    height: 100%;
-    max-height: 100vh;
-    margin: 0;
-    border-radius: 0;
-    overflow: hidden;
+.add-currency-card:hover {
+    border-color: var(--primary-color);
+    color: var(--primary-color);
 }
 
-@media (min-width: 768px) {
-    .settings-modal {
-        width: 90%;
-        max-width: 600px;
-        height: auto;
-        max-height: 90vh;
-        margin: 2rem auto;
-        border-radius: 0.5rem;
-    }
-}
-
-@media (max-width: 768px) {
-    .dashboard {
-        padding: 1rem;
-    }
-
-    .header {
-        flex-direction: column;
-        align-items: flex-start;
-        gap: 1rem;
-    }
-
-    .actions {
-        width: 100%;
-    }
-
-    .btn-secondary {
-        flex: 1;
-    }
-
-    .currency-cards {
-        grid-template-columns: 1fr;
-    }
+.add-icon {
+    font-size: 2rem;
+    margin-bottom: 0.5rem;
 }
 </style>

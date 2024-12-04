@@ -1,47 +1,41 @@
-<script>
+<script setup>
 import { computed, onMounted } from 'vue';
 import { useStore } from 'vuex';
-import WalletSetup from './components/WalletSetup.vue';
+import browser from 'webextension-polyfill';
 import WalletDashboard from './components/WalletDashboard.vue';
+import WalletSetup from './components/WalletSetup.vue';
 import Login from './components/Login.vue';
 
-export default {
-  name: 'App',
-  components: {
-    WalletSetup,
-    WalletDashboard,
-    Login
-  },
-  setup() {
-    const store = useStore();
+const store = useStore();
 
-    // Computed properties from store
-    const isInitialized = computed(() => store.getters['wallet/isWalletInitialized']);
-    const isSeedConfirmed = computed(() => store.getters['wallet/isSeedConfirmed']);
-    const hasWallet = computed(() => store.getters['wallet/hasWallet']);
-    const isLoggedIn = computed(() => store.getters['wallet/isLoggedIn']);
-    const error = computed(() => store.getters['wallet/errorMessage']);
-    const loading = computed(() => store.getters['wallet/isLoading']);
+// Computed properties from store
+const isInitialized = computed(() => store.getters['wallet/isWalletInitialized']);
+const hasWallet = computed(() => store.getters['wallet/hasWallet']);
+const isLoggedIn = computed(() => store.getters['wallet/isLoggedIn']);
+const error = computed(() => store.getters['wallet/errorMessage']);
+const loading = computed(() => store.getters['wallet/isLoading']);
 
-    onMounted(async () => {
-      try {
-        // Load wallet data from storage
-        await store.dispatch('wallet/loadWallet');
-      } catch (err) {
-        console.error('Error loading wallet:', err);
+onMounted(async () => {
+  try {
+    console.log('App mounted, initializing...');
+    // Load wallet data first
+    await store.dispatch('wallet/loadWallet');
+    
+    // Get stored state
+    const data = await browser.storage.local.get(['wallet', 'hasWallet', 'isLoggedIn']);
+    console.log('Stored state:', data);
+    
+    if (data.wallet && data.hasWallet) {
+      store.commit('wallet/setHasWallet', true);
+      if (data.isLoggedIn) {
+        store.commit('wallet/setLoggedIn', true);
       }
-    });
-
-    return {
-      isInitialized,
-      isSeedConfirmed,
-      hasWallet,
-      isLoggedIn,
-      error,
-      loading
-    };
+    }
+  } catch (err) {
+    console.error('Error initializing app:', err);
+    store.commit('wallet/setError', err.message);
   }
-};
+});
 </script>
 
 <template>

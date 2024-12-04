@@ -22,7 +22,6 @@
                     class="search-input"
                 />
             </div>
-
             <div class="currencies">
                 <div 
                     v-for="currency in filteredCurrencies" 
@@ -53,7 +52,9 @@ import { useStore } from 'vuex';
 export default {
     name: 'CurrencySelector',
     
-    setup() {
+    emits: ['close', 'currency-selected'],
+
+    setup(props, { emit }) {
         const store = useStore();
         const searchQuery = ref('');
 
@@ -82,6 +83,7 @@ export default {
                 store.dispatch('currencies/unselectCurrency', currency);
             } else if (canAddMore.value) {
                 store.dispatch('currencies/selectCurrency', currency);
+                emit('currency-selected', currency);
             }
         };
 
@@ -105,7 +107,6 @@ export default {
     display: flex;
     flex-direction: column;
     height: 100%;
-    max-height: 600px;
 }
 
 .header {

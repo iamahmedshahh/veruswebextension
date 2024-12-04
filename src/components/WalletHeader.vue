@@ -1,7 +1,84 @@
+<template>
+  <header class="wallet-header">
+    <div class="logo-container">
+      <img :src="VerusLogo" alt="Verus Logo" class="logo" />
+      <span class="wallet-name">Verus Wallet</span>
+    </div>
+    <div class="actions-container">
+      <div class="network-status">
+        <span class="status-dot" :class="{ 'connected': isConnected }"></span>
+        {{ networkName }}
+      </div>
+      <div class="icon-buttons">
+        <div 
+          class="icon-wrapper"
+          :class="{ 'disconnected': !isConnected }"
+          @click="checkConnection"
+          :title="isConnected ? 'Connected' : 'Not Connected'"
+        >
+          <i class="fas fa-globe"></i>
+        </div>
+        <div 
+          class="icon-wrapper"
+          @click="toggleLock"
+          :title="isLocked ? 'Unlock Wallet' : 'Lock Wallet'"
+        >
+          <i class="fas" :class="isLocked ? 'fa-lock' : 'fa-lock-open'"></i>
+        </div>
+        <div 
+          class="icon-wrapper"
+          @click="$emit('settings-click')"
+          title="Settings"
+        >
+          <i class="fas fa-cog"></i>
+        </div>
+        <div 
+          class="icon-wrapper donate-icon"
+          @click="showDonateModal = true"
+          title="Donate"
+        >
+          <i class="fas fa-heart"></i>
+        </div>
+      </div>
+    </div>
+
+    <!-- Donate Modal -->
+    <div v-if="showDonateModal" class="modal">
+      <div class="modal-content">
+        <div class="modal-header">
+          <h3>Support Verus Development</h3>
+          <div class="close-icon" @click="showDonateModal = false">
+            <i class="fas fa-times"></i>
+          </div>
+        </div>
+        <div class="modal-body">
+          <p>Thank you for considering a donation to support Verus development!</p>
+          <div class="donate-address">
+            <span class="label">VRSCTEST Address:</span>
+            <div class="address-container">
+              <code>{{ donateAddress }}</code>
+              <div class="copy-icon" @click="copyDonateAddress" title="Copy Address">
+                <i class="fas fa-copy"></i>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </header>
+</template>
+
 <script setup>
-import { ref, onMounted } from 'vue'
+import { ref, onMounted, watch } from 'vue'
+import { useStore } from 'vuex'
 import browser from 'webextension-polyfill'
 import VerusLogo from '../assets/verus-logo.svg'
+
+const store = useStore()
+const isConnected = ref(false)
+const networkName = ref('Verus Testnet')
+const showDonateModal = ref(false)
+const donateAddress = 'RYX5xvDrGadCVwYeyp4K5WiuLQpH7TuFtK' // Replace with actual donate address
 
 const props = defineProps({
   isLocked: {
@@ -10,53 +87,50 @@ const props = defineProps({
   }
 })
 
-const isConnected = ref(false)
-const networkName = ref('Verus Testnet')
-
-// Check connection status
-onMounted(async () => {
+async function checkConnection() {
   try {
-    const port = browser.runtime.connect({ name: 'popup' });
-    port.postMessage({ type: 'VERUS_CHECK_CONNECTION' });
-    
-    port.onMessage.addListener((response) => {
-      if (response.type === 'CONNECTION_STATUS') {
-        isConnected.value = response.connected;
-      }
-    });
+    const connected = await store.dispatch('wallet/checkConnection')
+    isConnected.value = connected
   } catch (error) {
-    console.error('Failed to check connection:', error);
-    isConnected.value = false;
+    console.error('Connection check failed:', error)
+    isConnected.value = false
   }
-});
-</script>
+}
 
-<template>
-  <header class="wallet-header">
-    <div class="logo-container">
-      <img :src="VerusLogo" alt="Verus Logo" class="logo" />
-      <span class="wallet-name">Verus Wallet</span>
-    </div>
-    <div class="status-container">
-      <div class="network-status">
-        <span class="status-dot" :class="{ 'connected': isConnected }"></span>
-        {{ networkName }}
-      </div>
-      <div class="lock-status">
-        <i class="fas" :class="isLocked ? 'fa-lock' : 'fa-lock-open'"></i>
-      </div>
-    </div>
-  </header>
-</template>
+function toggleLock() {
+  if (props.isLocked) {
+    store.dispatch('wallet/unlock')
+  } else {
+    store.dispatch('wallet/lock')
+  }
+}
+
+async function copyDonateAddress() {
+  try {
+    await navigator.clipboard.writeText(donateAddress)
+    // You could add a toast notification here
+    console.log('Donate address copied!')
+  } catch (error) {
+    console.error('Failed to copy address:', error)
+  }
+}
+
+// Initial connection check
+onMounted(async () => {
+  await checkConnection()
+  // Check connection every 30 seconds
+  setInterval(checkConnection, 30000)
+})
+</script>
 
 <style scoped>
 .wallet-header {
-  padding: 1rem;
-  border-bottom: 1px solid var(--border-color);
   display: flex;
   justify-content: space-between;
   align-items: center;
-  background: white;
+  padding: 0.75rem 1rem;
+  background: var(--background-color);
+  border-bottom: 1px solid var(--border-color);
 }
 
 .logo-container {
@@ -66,16 +140,16 @@ onMounted(async () => {
 }
 
 .logo {
-  width: 24px;
   height: 24px;
+  width: auto;
 }
 
 .wallet-name {
   font-weight: 600;
-  font-size: 1.1rem;
+  font-size: 1.125rem;
 }
 
-.status-container {
+.actions-container {
   display: flex;
   align-items: center;
   gap: 1rem;
@@ -85,7 +159,7 @@ onMounted(async () => {
   display: flex;
   align-items: center;
   gap: 0.5rem;
-  font-size: 0.9rem;
+  font-size: 0.875rem;
   color: var(--text-color);
 }
 
@@ -93,19 +167,138 @@ onMounted(async () => {
   width: 8px;
   height: 8px;
   border-radius: 50%;
-  background: #e74c3c;
+  background: var(--error-color);
 }
 
 .status-dot.connected {
-  background: var(--secondary-color);
+  background: var(--success-color);
 }
 
-.lock-status {
-  color: var(--text-color);
+.icon-buttons {
+  display: flex;
+  gap: 0.5rem;
+}
+
+.icon-wrapper {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  border-radius: 6px;
   cursor: pointer;
+  transition: all 0.2s ease;
+  color: var(--text-color);
 }
 
-.lock-status:hover {
+.icon-wrapper:hover {
+  background: var(--hover-color);
   color: var(--primary-color);
+}
+
+.icon-wrapper.disconnected {
+  color: var(--error-color);
+}
+
+.donate-icon {
+  color: var(--accent-color);
+}
+
+.donate-icon:hover {
+  color: var(--accent-color-hover);
+}
+
+.modal {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: rgba(0, 0, 0, 0.5);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1000;
+}
+
+.modal-content {
+  background: white;
+  border-radius: 8px;
+  width: 90%;
+  max-width: 480px;
+  padding: 1.5rem;
+}
+
+.modal-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 1rem;
+}
+
+.modal-header h3 {
+  margin: 0;
+  font-size: 1.25rem;
+}
+
+.close-icon {
+  cursor: pointer;
+  padding: 0.5rem;
+  margin: -0.5rem;
+  border-radius: 4px;
+  transition: background-color 0.2s;
+}
+
+.close-icon:hover {
+  background: var(--hover-color);
+}
+
+.modal-body {
+  color: var(--text-color);
+}
+
+.donate-address {
+  margin-top: 1rem;
+}
+
+.label {
+  display: block;
+  font-size: 0.875rem;
+  color: var(--text-color-light);
+  margin-bottom: 0.5rem;
+}
+
+.address-container {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  background: var(--input-background);
+  padding: 0.75rem;
+  border-radius: 4px;
+}
+
+.address-container code {
+  flex: 1;
+  font-family: monospace;
+  font-size: 0.875rem;
+}
+
+.copy-icon {
+  cursor: pointer;
+  padding: 0.25rem;
+  border-radius: 4px;
+  transition: all 0.2s ease;
+}
+
+.copy-icon:hover {
+  background: var(--hover-color);
+  color: var(--primary-color);
+}
+
+:root {
+  --accent-color: #ff6b6b;
+  --accent-color-hover: #ff5252;
+  --hover-color: rgba(0, 0, 0, 0.05);
+  --text-color-light: #666;
 }
 </style>
