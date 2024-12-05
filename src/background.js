@@ -14,6 +14,12 @@ const extensionState = {
   pendingRequests: new Map()
 };
 
+// Wallet state
+let walletState = {
+  isLocked: true,
+  address: null
+};
+
 // Handle browser startup
 browser.runtime.onStartup.addListener(async () => {
   console.log('Browser started, initializing...');
@@ -39,7 +45,7 @@ async function initializeState() {
     console.log('RPC connection status:', isConnected ? 'Connected' : 'Failed to connect');
     
     // Load wallet state and connected sites
-    const data = await browser.storage.local.get(['wallet', 'hasWallet', 'connectedSites']);
+    const data = await browser.storage.local.get(['wallet', 'hasWallet', 'connectedSites', 'walletState']);
     const sessionData = await browser.storage.session.get(['isLoggedIn']);
     
     // Update extension state
@@ -49,6 +55,10 @@ async function initializeState() {
     
     if (data.connectedSites) {
       extensionState.connectedSites = new Map(JSON.parse(data.connectedSites));
+    }
+    
+    if (data.walletState) {
+      walletState = data.walletState;
     }
     
     console.log('Extension state initialized:', extensionState);
@@ -116,41 +126,8 @@ async function handleConnect(request, sender) {
     throw new Error('Wallet is locked');
   }
   
-  // Create connection request
-  const requestId = Date.now().toString();
-  const connectionRequest = {
-    id: requestId,
-    origin,
-    type: 'CONNECT_REQUEST',
-    timestamp: Date.now()
-  };
-  
-  extensionState.pendingRequests.set(requestId, connectionRequest);
-  
-  // Open popup for approval
-  await browser.windows.create({
-    url: 'popup.html#/connect?' + new URLSearchParams({
-      request: requestId,
-      origin
-    }).toString(),
-    type: 'popup',
-    width: 400,
-    height: 600
-  });
-  
-  // Wait for response
-  return new Promise((resolve, reject) => {
-    const timeout = setTimeout(() => {
-      extensionState.pendingRequests.delete(requestId);
-      reject(new Error('Connection request timeout'));
-    }, 30000);
-    
-    extensionState.pendingRequests.set(requestId, {
-      ...connectionRequest,
-      resolve,
-      reject,
-      timeout
-    });
+  return browser.runtime.sendMessage({
+    type: 'VERUS_CONNECT_REQUEST'
   });
 }
 
@@ -166,35 +143,94 @@ async function handleGetAccounts(sender) {
   return wallet.address ? [wallet.address] : [];
 }
 
-// Handle response from popup
-browser.runtime.onMessage.addListener(async (message, sender) => {
-  if (message.type === 'CONNECT_RESPONSE' || message.type === 'SIGN_RESPONSE') {
-    const origin = message.origin;
-    const request = extensionState.pendingRequests.get(message.requestId);
-    
-    if (!request) {
-      console.warn('No pending request found:', message.requestId);
-      return;
-    }
-    
-    clearTimeout(request.timeout);
-    extensionState.pendingRequests.delete(message.requestId);
-    
-    if (message.approved) {
-      if (message.type === 'CONNECT_RESPONSE') {
-        extensionState.connectedSites.set(origin, {
-          connected: Date.now()
+// Message handling
+browser.runtime.onMessage.addListener((message, sender) => {
+  console.log('[Verus Background] Received message:', message);
+  
+  if (message.type === 'VERUS_CONNECT_REQUEST') {
+    if (walletState.isLocked) {
+      // Create a popup to unlock the wallet
+      return browser.windows.create({
+        url: 'popup.html#/unlock',
+        type: 'popup',
+        width: 400,
+        height: 600
+      }).then((popup) => {
+        // Return a promise that resolves when the wallet is unlocked
+        return new Promise((resolve) => {
+          const listener = (changes, namespace) => {
+            if (namespace === 'local' && changes.walletState) {
+              const newState = changes.walletState.newValue;
+              if (!newState.isLocked) {
+                browser.storage.onChanged.removeListener(listener);
+                browser.windows.remove(popup.id);
+                resolve({
+                  result: {
+                    address: newState.address
+                  }
+                });
+              }
+            }
+          };
+          
+          browser.storage.onChanged.addListener(listener);
+          
+          // Also listen for popup close
+          browser.windows.onRemoved.addListener(function closeListener(windowId) {
+            if (windowId === popup.id) {
+              browser.storage.onChanged.removeListener(listener);
+              browser.windows.onRemoved.removeListener(closeListener);
+              resolve({
+                error: 'User cancelled'
+              });
+            }
+          });
         });
-        
-        // Save connected sites
-        await browser.storage.local.set({
-          connectedSites: JSON.stringify([...extensionState.connectedSites])
-        });
-      }
-      
-      request.resolve(message.data);
+      }).catch(error => {
+        console.error('[Verus Background] Error creating popup:', error);
+        return {
+          error: error.message
+        };
+      });
     } else {
-      request.reject(new Error(message.error || 'Request rejected'));
+      return Promise.resolve({
+        result: {
+          address: walletState.address
+        }
+      });
     }
+  }
+  
+  if (message.type === 'UNLOCK_WALLET') {
+    try {
+      // Here you would normally verify the password
+      // For now, we'll just simulate unlocking
+      walletState = {
+        isLocked: false,
+        address: 'RTest1234567890'
+      };
+      
+      // Save state
+      return browser.storage.local.set({ walletState }).then(() => ({
+        result: {
+          success: true
+        }
+      }));
+    } catch (error) {
+      console.error('[Verus Background] Error unlocking wallet:', error);
+      return Promise.resolve({
+        error: error.message
+      });
+    }
+  }
+  
+  // Return true to indicate we'll respond asynchronously
+  return true;
+});
+
+// Initialize wallet state from storage
+browser.storage.local.get('walletState').then((result) => {
+  if (result.walletState) {
+    walletState = result.walletState;
   }
 });

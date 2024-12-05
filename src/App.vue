@@ -1,12 +1,14 @@
 <script setup>
 import { computed, onMounted } from 'vue';
 import { useStore } from 'vuex';
+import { useRoute } from 'vue-router';
 import browser from 'webextension-polyfill';
 import WalletDashboard from './components/WalletDashboard.vue';
 import WalletSetup from './components/WalletSetup.vue';
 import Login from './components/Login.vue';
 
 const store = useStore();
+const route = useRoute();
 
 // Computed properties from store
 const isInitialized = computed(() => store.getters['wallet/isWalletInitialized']);
@@ -38,26 +40,32 @@ onMounted(async () => {
 
 <template>
   <div class="app-container">
-    <div v-if="loading" class="loading">
-      <div class="loading-spinner"></div>
-      <div class="loading-text">Loading your wallet...</div>
-    </div>
-    <div v-else-if="error" class="error">
-      {{ error }}
-    </div>
-    <div v-else class="content">
-      <template v-if="hasWallet">
-        <template v-if="isLoggedIn">
-          <WalletDashboard />
+    <!-- Show router view for specific routes like /unlock -->
+    <router-view v-if="route.name === 'unlock'"></router-view>
+    
+    <!-- Show normal wallet UI for other routes -->
+    <template v-else>
+      <div v-if="loading" class="loading">
+        <div class="loading-spinner"></div>
+        <div class="loading-text">Loading your wallet...</div>
+      </div>
+      <div v-else-if="error" class="error">
+        {{ error }}
+      </div>
+      <div v-else class="content">
+        <template v-if="hasWallet">
+          <template v-if="isLoggedIn">
+            <WalletDashboard />
+          </template>
+          <template v-else>
+            <Login />
+          </template>
         </template>
         <template v-else>
-          <Login />
+          <WalletSetup />
         </template>
-      </template>
-      <template v-else>
-        <WalletSetup />
-      </template>
-    </div>
+      </div>
+    </template>
   </div>
 </template>
 

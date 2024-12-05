@@ -16,13 +16,18 @@ const createVerusProvider = () => ({
     return Promise.resolve([]);
   },
   
-  // Request account access (legacy method)
+  // Request account access
   requestAccounts: function() {
     console.log('requestAccounts called');
-    return this.connect().then(result => [result.address]);
+    return this.connect().then(result => {
+      if (result.error) {
+        throw new Error(result.error);
+      }
+      return [result.address];
+    });
   },
   
-  // Connect to the wallet (new method)
+  // Connect to the wallet
   connect: function() {
     console.log('connect called');
     
@@ -64,6 +69,8 @@ const createVerusProvider = () => ({
       
       window.addEventListener('message', handler);
       window.postMessage({ type: 'VERUS_CONNECT_REQUEST' }, '*');
+    }).finally(() => {
+      this._connecting = null;
     });
     
     return this._connecting;

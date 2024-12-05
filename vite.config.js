@@ -67,6 +67,10 @@ export default defineConfig({
             ]
           }
         ],
+        content_security_policy: {
+          extension_pages: "script-src 'self' 'wasm-unsafe-eval'; object-src 'self'",
+          sandbox: "sandbox allow-scripts allow-forms allow-popups allow-modals; script-src 'self' 'unsafe-inline' 'unsafe-eval'; child-src 'self';"
+        },
         icons: {
           "16": "icons/icon16.png",
           "48": "icons/icon48.png",
