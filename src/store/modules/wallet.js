@@ -16,7 +16,8 @@ const state = {
     isLoadingBalances: false,
     balances: {},
     selectedCurrencies: ['VRSCTEST'],
-    isLocked: true
+    isLocked: true,
+    connectedSites: []
 };
 
 // Getters
@@ -156,36 +157,35 @@ const actions = {
             commit('clearError');
             commit('setLoading', true);
             
-            // Get stored wallet data
-            const data = await browser.storage.local.get(['wallet', 'isLoggedIn', 'selectedCurrencies']);
+            // Get stored wallet data from local storage
+            const walletData = await browser.storage.local.get(['wallet', 'hasWallet']);
+            // Get login state from session storage
+            const sessionData = await browser.storage.session.get(['isLoggedIn']);
             
-            if (!data.wallet) {
+            if (!walletData.wallet) {
                 commit('setHasWallet', false);
                 return;
             }
             
             // Set wallet data
             commit('setWalletData', {
-                address: data.wallet.address,
-                network: data.wallet.network
+                address: walletData.wallet.address,
+                network: walletData.wallet.network
             });
             
             commit('setHasWallet', true);
             commit('setInitialized', true);
             
-            // Restore login state
-            if (data.isLoggedIn) {
+            // Restore login state from session
+            if (sessionData.isLoggedIn) {
                 commit('setLoggedIn', true);
                 // Update balances if logged in
                 await dispatch('updateBalances');
+            } else {
+                commit('setLoggedIn', false);
             }
             
-            // Restore selected currencies
-            if (data.selectedCurrencies) {
-                commit('SET_SELECTED_CURRENCIES', data.selectedCurrencies);
-            }
-            
-            return data.wallet;
+            return walletData.wallet;
         } catch (error) {
             console.error('Failed to load wallet:', error);
             commit('setError', error.message);
@@ -218,10 +218,10 @@ const actions = {
             // Verify password
             await dispatch('verifyPassword', password);
             
-            // Set login state in storage
-            await browser.storage.local.set({ 
+            // Set login state in session storage instead of local storage
+            await browser.storage.session.set({ 
                 isLoggedIn: true,
-                lastLoginTime: Date.now() // Add timestamp
+                lastLoginTime: Date.now()
             });
             
             // Update store state
@@ -245,7 +245,7 @@ const actions = {
             commit('setLoading', true);
             
             // Clear only login state from storage, preserve wallet data
-            await browser.storage.local.set({ 
+            await browser.storage.session.set({ 
                 isLoggedIn: false,
                 lastLoginTime: null
             });
@@ -315,7 +315,56 @@ const actions = {
     
     removeCurrency({ commit }, currency) {
         commit('REMOVE_CURRENCY', currency);
-    }
+    },
+    
+    async getConnectedSites({ commit }) {
+        try {
+            const sites = await browser.storage.local.get('connectedSites')
+            commit('SET_CONNECTED_SITES', sites.connectedSites || [])
+            return sites.connectedSites || []
+        } catch (error) {
+            console.error('Failed to get connected sites:', error)
+            return []
+        }
+    },
+
+    async disconnectSite({ commit, dispatch }, origin) {
+        try {
+            const sites = await browser.storage.local.get('connectedSites')
+            const updatedSites = (sites.connectedSites || []).filter(site => site.origin !== origin)
+            await browser.storage.local.set({ connectedSites: updatedSites })
+            commit('SET_CONNECTED_SITES', updatedSites)
+            
+            // Notify content script to remove connection
+            const tabs = await browser.tabs.query({ url: origin + '/*' })
+            tabs.forEach(tab => {
+                browser.tabs.sendMessage(tab.id, {
+                    type: 'DISCONNECT_SITE',
+                    origin
+                })
+            })
+        } catch (error) {
+            console.error('Failed to disconnect site:', error)
+            throw error
+        }
+    },
+
+    async addConnectedSite({ commit, state }, { origin, favicon }) {
+        try {
+            const sites = await browser.storage.local.get('connectedSites')
+            const existingSites = sites.connectedSites || []
+            
+            // Don't add if already exists
+            if (!existingSites.some(site => site.origin === origin)) {
+                const updatedSites = [...existingSites, { origin, favicon, connectedAt: Date.now() }]
+                await browser.storage.local.set({ connectedSites: updatedSites })
+                commit('SET_CONNECTED_SITES', updatedSites)
+            }
+        } catch (error) {
+            console.error('Failed to add connected site:', error)
+            throw error
+        }
+    },
 };
 
 // Mutations
@@ -395,7 +444,15 @@ const mutations = {
     
     SET_SELECTED_CURRENCIES(state, currencies) {
         state.selectedCurrencies = currencies;
-    }
+    },
+    
+    SET_CONNECTED_SITES(state, sites) {
+        state.connectedSites = sites
+    },
+    
+    REMOVE_CONNECTED_SITE(state, origin) {
+        state.connectedSites = state.connectedSites.filter(site => site.origin !== origin)
+    },
 };
 
 export default {

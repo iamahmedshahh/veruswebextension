@@ -1,20 +1,79 @@
 import browser from 'webextension-polyfill';
 
-console.log('Verus Wallet content script loaded');
+console.log('[Verus] Content script loaded');
+
+// Initialize provider directly in the page context
+const initProvider = async () => {
+  try {
+    // Fetch provider code
+    const providerUrl = browser.runtime.getURL('provider.js');
+    const initUrl = browser.runtime.getURL('initProvider.js');
+    
+    const [providerResponse, initResponse] = await Promise.all([
+      fetch(providerUrl),
+      fetch(initUrl)
+    ]);
+    
+    const [providerCode, initCode] = await Promise.all([
+      providerResponse.text(),
+      initResponse.text()
+    ]);
+    
+    // Create and inject the provider script
+    const script = document.createElement('script');
+    script.textContent = `
+      ${providerCode}
+      ${initCode}
+    `;
+    (document.head || document.documentElement).appendChild(script);
+    script.remove(); // Remove the script tag after execution
+    
+    console.log('[Verus] Provider scripts injected successfully');
+  } catch (error) {
+    console.error('[Verus] Failed to inject provider scripts:', error);
+  }
+};
 
 // Initialize connection to background script
-const port = browser.runtime.connect({ name: 'content-script' });
+let port;
+try {
+  port = browser.runtime.connect({ name: 'content-script' });
+  console.log('[Verus] Connected to background script');
+  
+  // Initialize provider after connecting to background
+  initProvider();
+} catch (error) {
+  console.error('[Verus] Failed to connect to background script:', error);
+}
 
 // Create a promise resolver map for handling async responses
 const promiseResolvers = new Map();
 let messageId = 0;
 
-// Listen for messages from the background script
-port.onMessage.addListener((message) => {
-  console.log('Content script received message:', message);
+// Send message to background script and wait for response
+const sendMessage = async (type, data = {}) => {
+  console.log('[Verus] Sending message to background:', type, data);
+  const id = messageId++;
   
-  // Find and resolve the corresponding promise
-  if (message.id && promiseResolvers.has(message.id)) {
+  const promise = new Promise((resolve, reject) => {
+    promiseResolvers.set(id, { resolve, reject });
+    setTimeout(() => {
+      if (promiseResolvers.has(id)) {
+        promiseResolvers.delete(id);
+        reject(new Error('Request timeout'));
+      }
+    }, 30000);
+  });
+  
+  port.postMessage({ id, type, ...data });
+  return promise;
+};
+
+// Handle messages from the background script
+port.onMessage.addListener((message) => {
+  console.log('[Verus] Received message from background:', message);
+  
+  if (message.id !== undefined && promiseResolvers.has(message.id)) {
     const { resolve, reject } = promiseResolvers.get(message.id);
     promiseResolvers.delete(message.id);
     
@@ -25,114 +84,41 @@ port.onMessage.addListener((message) => {
     }
   }
   
-  // Forward response to the page
+  // Forward message to page context
   window.postMessage({
-    type: `${message.type}_RESPONSE`,
-    result: message.result,
-    error: message.error
+    type: message.type,
+    error: message.error,
+    result: message.result
   }, '*');
 });
 
-// Inject the Verus provider into the page
-const injectProvider = () => {
-  const script = document.createElement('script');
-  script.textContent = `
-    window.verus = {
-      isVerusWallet: true,
-      version: '1.0.0',
-      
-      // Request account access
-      requestAccounts: async () => {
-        return new Promise((resolve, reject) => {
-          window.addEventListener('message', function handler(event) {
-            if (event.source !== window) return;
-            if (event.data.type === 'VERUS_REQUEST_ACCOUNTS_RESPONSE') {
-              window.removeEventListener('message', handler);
-              if (event.data.error) {
-                reject(new Error(event.data.error));
-              } else {
-                resolve(event.data.result);
-              }
-            }
-          });
-          window.postMessage({ type: 'VERUS_REQUEST_ACCOUNTS' }, '*');
-        });
-      },
-      
-      // Get connected account
-      getAccount: async () => {
-        return new Promise((resolve, reject) => {
-          window.addEventListener('message', function handler(event) {
-            if (event.source !== window) return;
-            if (event.data.type === 'VERUS_GET_ACCOUNT_RESPONSE') {
-              window.removeEventListener('message', handler);
-              if (event.data.error) {
-                reject(new Error(event.data.error));
-              } else {
-                resolve(event.data.result);
-              }
-            }
-          });
-          window.postMessage({ type: 'VERUS_GET_ACCOUNT' }, '*');
-        });
-      },
-      
-      // Send transaction
-      sendTransaction: async (params) => {
-        return new Promise((resolve, reject) => {
-          window.addEventListener('message', function handler(event) {
-            if (event.source !== window) return;
-            if (event.data.type === 'VERUS_SEND_TRANSACTION_RESPONSE') {
-              window.removeEventListener('message', handler);
-              if (event.data.error) {
-                reject(new Error(event.data.error));
-              } else {
-                resolve(event.data.result);
-              }
-            }
-          });
-          window.postMessage({ 
-            type: 'VERUS_SEND_TRANSACTION',
-            params
-          }, '*');
-        });
-      }
-    };
-    
-    console.log('Verus provider injected');
-  `;
-  
-  document.documentElement.appendChild(script);
-  script.remove();
-};
-
-// Listen for messages from the injected provider
-window.addEventListener('message', (event) => {
+// Listen for messages from page context
+window.addEventListener('message', async (event) => {
   if (event.source !== window) return;
   
   const { type, params } = event.data;
+  if (!type) return;
   
-  if (type && type.startsWith('VERUS_')) {
-    // Create a unique message ID
-    const id = messageId++;
-    
-    // Create a promise resolver
-    const messagePromise = new Promise((resolve, reject) => {
-      promiseResolvers.set(id, { resolve, reject });
-      
-      // Cleanup if no response is received
-      setTimeout(() => {
-        if (promiseResolvers.has(id)) {
-          promiseResolvers.delete(id);
-          reject(new Error('Request timeout'));
-        }
-      }, 30000); // 30 second timeout
-    });
-    
-    // Send message to background script
-    port.postMessage({ id, type, params });
+  console.log('[Verus] Received message from page:', type, params);
+  
+  try {
+    const result = await sendMessage(type, { params });
+    window.postMessage({
+      type: `${type}_RESPONSE`,
+      result
+    }, '*');
+  } catch (error) {
+    window.postMessage({
+      type: `${type}_RESPONSE`,
+      error: error.message
+    }, '*');
   }
 });
 
-// Inject provider when the content script loads
-injectProvider();
+// Re-inject on visibility change for SPA navigation
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState === 'visible') {
+    console.log('[Verus] Page became visible, re-injecting provider');
+    initProvider();
+  }
+});

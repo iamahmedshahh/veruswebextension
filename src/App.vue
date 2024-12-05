@@ -18,18 +18,16 @@ const loading = computed(() => store.getters['wallet/isLoading']);
 onMounted(async () => {
   try {
     console.log('App mounted, initializing...');
+    
     // Load wallet data first
     await store.dispatch('wallet/loadWallet');
     
-    // Get stored state
-    const data = await browser.storage.local.get(['wallet', 'hasWallet', 'isLoggedIn']);
+    // Get stored state - only wallet data from local storage
+    const data = await browser.storage.local.get(['wallet', 'hasWallet']);
     console.log('Stored state:', data);
     
     if (data.wallet && data.hasWallet) {
       store.commit('wallet/setHasWallet', true);
-      if (data.isLoggedIn) {
-        store.commit('wallet/setLoggedIn', true);
-      }
     }
   } catch (err) {
     console.error('Error initializing app:', err);

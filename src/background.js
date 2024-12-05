@@ -9,8 +9,22 @@ const extensionState = {
   lastConnection: null,
   isInitialized: false,
   hasWallet: false,
-  isLoggedIn: false
+  isLoggedIn: false,
+  connectedSites: new Map(),
+  pendingRequests: new Map()
 };
+
+// Handle browser startup
+browser.runtime.onStartup.addListener(async () => {
+  console.log('Browser started, initializing...');
+  await initializeState();
+});
+
+// Initialize when installed or updated
+browser.runtime.onInstalled.addListener(async (details) => {
+  console.log('Extension installed/updated:', details.reason);
+  await initializeState();
+});
 
 // Initialize connection and state
 async function initializeState() {
@@ -24,81 +38,163 @@ async function initializeState() {
     
     console.log('RPC connection status:', isConnected ? 'Connected' : 'Failed to connect');
     
-    // Load wallet state
-    const data = await browser.storage.local.get(['wallet', 'isLoggedIn', 'hasWallet']);
+    // Load wallet state and connected sites
+    const data = await browser.storage.local.get(['wallet', 'hasWallet', 'connectedSites']);
+    const sessionData = await browser.storage.session.get(['isLoggedIn']);
     
     // Update extension state
     extensionState.hasWallet = !!data.wallet;
-    extensionState.isLoggedIn = !!data.isLoggedIn;
+    extensionState.isLoggedIn = !!sessionData.isLoggedIn;
     extensionState.isInitialized = true;
     
-    if (data.wallet) {
-      // Preserve wallet and login state
-      await browser.storage.local.set({ 
-        wallet: data.wallet,
-        hasWallet: true,
-        isInitialized: true,
-        isLoggedIn: !!data.isLoggedIn
-      });
+    if (data.connectedSites) {
+      extensionState.connectedSites = new Map(JSON.parse(data.connectedSites));
     }
-
+    
     console.log('Extension state initialized:', extensionState);
-    return { 
-      success: true, 
-      hasWallet: extensionState.hasWallet,
-      isLoggedIn: extensionState.isLoggedIn
-    };
   } catch (error) {
-    console.error('Initialization error:', error);
-    extensionState.isConnected = false;
-    extensionState.isInitialized = false;
-    throw error;
+    console.error('Failed to initialize extension state:', error);
   }
 }
 
-// Handle messages from the popup
-browser.runtime.onMessage.addListener(async (request, sender) => {
-  console.log('Background script received message:', request);
+// Handle content script connection
+browser.runtime.onConnect.addListener((port) => {
+  console.log('New connection from content script:', port.name);
   
-  switch (request.type) {
-    case 'INITIALIZE':
-      return initializeState();
-    case 'CHECK_SESSION':
-      return {
-        isActive: extensionState.isLoggedIn
-      };
-    case 'SET_LOGIN_STATE':
-      extensionState.isLoggedIn = request.isLoggedIn;
-      await browser.storage.local.set({ isLoggedIn: request.isLoggedIn });
-      return { success: true };
-    default:
-      return { error: 'Unknown message type' };
-  }
-});
-
-// Initialize state when extension starts
-browser.runtime.onStartup.addListener(async () => {
-  await initializeState();
-});
-
-// Handle window removal
-browser.windows.onRemoved.addListener(async (windowId) => {
-  const windows = await browser.windows.getAll();
-  if (windows.length === 0) {
-    // Preserve wallet and login state
-    const data = await browser.storage.local.get(['wallet', 'isLoggedIn']);
-    if (data.wallet) {
-      await browser.storage.local.set({
-        wallet: data.wallet,
-        hasWallet: true,
-        isInitialized: true,
-        isLoggedIn: data.isLoggedIn // Preserve login state
+  port.onMessage.addListener(async (message) => {
+    console.log('Received message from content script:', message);
+    
+    try {
+      let response;
+      
+      switch (message.type) {
+        case 'VERUS_CONNECT_REQUEST':
+          response = await handleConnect(message, port.sender);
+          break;
+          
+        case 'VERUS_GET_ACCOUNTS':
+          response = await handleGetAccounts(port.sender);
+          break;
+          
+        default:
+          console.warn('Unknown message type:', message.type);
+          return;
+      }
+      
+      port.postMessage({
+        id: message.id,
+        result: response
+      });
+    } catch (error) {
+      console.error('Error handling content script message:', error);
+      port.postMessage({
+        id: message.id,
+        error: error.message
       });
     }
-  }
+  });
+  
+  port.onDisconnect.addListener(() => {
+    console.log('Content script disconnected:', port.name);
+  });
 });
 
-// Initialize on install
-browser.runtime.onInstalled.addListener(async () => {
-  await initializeState();
+// Handle connection request
+async function handleConnect(request, sender) {
+  const origin = sender.origin || sender.url;
+  console.log('Processing connect request from:', origin);
+  
+  if (!extensionState.isInitialized) {
+    throw new Error('Extension not initialized');
+  }
+  
+  if (!extensionState.hasWallet) {
+    throw new Error('No wallet configured');
+  }
+  
+  if (!extensionState.isLoggedIn) {
+    throw new Error('Wallet is locked');
+  }
+  
+  // Create connection request
+  const requestId = Date.now().toString();
+  const connectionRequest = {
+    id: requestId,
+    origin,
+    type: 'CONNECT_REQUEST',
+    timestamp: Date.now()
+  };
+  
+  extensionState.pendingRequests.set(requestId, connectionRequest);
+  
+  // Open popup for approval
+  await browser.windows.create({
+    url: 'popup.html#/connect?' + new URLSearchParams({
+      request: requestId,
+      origin
+    }).toString(),
+    type: 'popup',
+    width: 400,
+    height: 600
+  });
+  
+  // Wait for response
+  return new Promise((resolve, reject) => {
+    const timeout = setTimeout(() => {
+      extensionState.pendingRequests.delete(requestId);
+      reject(new Error('Connection request timeout'));
+    }, 30000);
+    
+    extensionState.pendingRequests.set(requestId, {
+      ...connectionRequest,
+      resolve,
+      reject,
+      timeout
+    });
+  });
+}
+
+// Handle get accounts request
+async function handleGetAccounts(sender) {
+  const origin = sender.origin || sender.url;
+  
+  if (!extensionState.connectedSites.has(origin)) {
+    return [];
+  }
+  
+  const wallet = await browser.storage.local.get('wallet');
+  return wallet.address ? [wallet.address] : [];
+}
+
+// Handle response from popup
+browser.runtime.onMessage.addListener(async (message, sender) => {
+  if (message.type === 'CONNECT_RESPONSE' || message.type === 'SIGN_RESPONSE') {
+    const origin = message.origin;
+    const request = extensionState.pendingRequests.get(message.requestId);
+    
+    if (!request) {
+      console.warn('No pending request found:', message.requestId);
+      return;
+    }
+    
+    clearTimeout(request.timeout);
+    extensionState.pendingRequests.delete(message.requestId);
+    
+    if (message.approved) {
+      if (message.type === 'CONNECT_RESPONSE') {
+        extensionState.connectedSites.set(origin, {
+          connected: Date.now()
+        });
+        
+        // Save connected sites
+        await browser.storage.local.set({
+          connectedSites: JSON.stringify([...extensionState.connectedSites])
+        });
+      }
+      
+      request.resolve(message.data);
+    } else {
+      request.reject(new Error(message.error || 'Request rejected'));
+    }
+  }
 });

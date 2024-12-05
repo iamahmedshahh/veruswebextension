@@ -12,6 +12,13 @@
       <div class="icon-buttons">
         <div 
           class="icon-wrapper"
+          @click="showConnectedSites"
+          title="Connected Sites"
+        >
+          <i class="fas fa-link"></i>
+        </div>
+        <div 
+          class="icon-wrapper"
           :class="{ 'disconnected': !isConnected }"
           @click="checkConnection"
           :title="isConnected ? 'Connected' : 'Not Connected'"
@@ -42,6 +49,9 @@
       </div>
     </div>
 
+    <!-- Connected Sites Component -->
+    <ConnectedSites ref="connectedSitesRef" />
+
     <!-- Donate Modal -->
     <div v-if="showDonateModal" class="modal">
       <div class="modal-content">
@@ -54,7 +64,7 @@
         <div class="modal-body">
           <p>Thank you for considering a donation to support Verus development!</p>
           <div class="donate-address">
-            <span class="label">VRSCTEST Address:</span>
+            <span class="label">VRSC and KMD Address:</span>
             <div class="address-container">
               <code>{{ donateAddress }}</code>
               <div class="copy-icon" @click="copyDonateAddress" title="Copy Address">
@@ -73,12 +83,14 @@ import { ref, onMounted, watch } from 'vue'
 import { useStore } from 'vuex'
 import browser from 'webextension-polyfill'
 import VerusLogo from '../assets/verus-logo.svg'
+import ConnectedSites from './ConnectedSites.vue'
 
 const store = useStore()
 const isConnected = ref(false)
 const networkName = ref('Verus Testnet')
 const showDonateModal = ref(false)
-const donateAddress = 'RYX5xvDrGadCVwYeyp4K5WiuLQpH7TuFtK' // Replace with actual donate address
+const donateAddress = 'RRQHGqgKivuwvWgeWAvTnGg5VJr1aWNRx5'
+const connectedSitesRef = ref(null)
 
 const props = defineProps({
   isLocked: {
@@ -103,6 +115,10 @@ function toggleLock() {
   } else {
     store.dispatch('wallet/lock')
   }
+}
+
+function showConnectedSites() {
+  connectedSitesRef.value?.open()
 }
 
 async function copyDonateAddress() {
