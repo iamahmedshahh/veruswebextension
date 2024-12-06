@@ -12,6 +12,7 @@
   },
   "dependencies": {
     "@bitgo/utxo-lib": "^3.1.0",
+    "@fortawesome/fontawesome-free": "^6.7.1",
     "assert": "^2.1.0",
     "bcryptjs": "^2.4.3",
     "bigi": "^1.4.2",

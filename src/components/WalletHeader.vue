@@ -204,23 +204,31 @@ onMounted(async () => {
   border-radius: 6px;
   cursor: pointer;
   transition: all 0.2s ease;
-  color: var(--text-color);
+  background: rgba(255, 255, 255, 0.1);
+}
+
+.icon-wrapper i {
+  color: #000000;
+  font-size: 16px;
 }
 
 .icon-wrapper:hover {
   background: var(--hover-color);
+}
+
+.icon-wrapper:hover i {
   color: var(--primary-color);
 }
 
-.icon-wrapper.disconnected {
+.icon-wrapper.disconnected i {
   color: var(--error-color);
 }
 
-.donate-icon {
+.donate-icon i {
   color: var(--accent-color);
 }
 
-.donate-icon:hover {
+.donate-icon:hover i {
   color: var(--accent-color-hover);
 }
 

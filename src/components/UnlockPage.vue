@@ -7,88 +7,174 @@
         <input 
           type="password" 
           id="password" 
-          v-model="password" 
-          placeholder="Enter your password"
+          v-model="password"
           required
-        />
+          placeholder="Enter your wallet password"
+          :disabled="isLoading"
+        >
       </div>
+      <div class="error" v-if="error">{{ error }}</div>
       <button type="submit" :disabled="isLoading">
         {{ isLoading ? 'Unlocking...' : 'Unlock' }}
       </button>
-      <p v-if="error" class="error">{{ error }}</p>
     </form>
   </div>
 </template>
 
-<script setup>
-import { ref } from 'vue';
+<script>
 import browser from 'webextension-polyfill';
 
-const password = ref('');
-const error = ref('');
-const isLoading = ref(false);
-
-const handleUnlock = async () => {
-  try {
-    isLoading.value = true;
-    error.value = '';
-    
-    const response = await browser.runtime.sendMessage({
-      type: 'UNLOCK_WALLET',
-      password: password.value
-    });
-    
-    if (response.error) {
-      throw new Error(response.error);
+export default {
+  name: 'UnlockPage',
+  data() {
+    return {
+      password: '',
+      error: '',
+      isLoading: false,
+      requestId: null
+    };
+  },
+  created() {
+    // Get the request ID from the URL if available
+    const params = new URLSearchParams(window.location.hash.split('?')[1]);
+    this.requestId = params.get('id');
+    console.log('Request ID:', this.requestId);
+  },
+  methods: {
+    async handleUnlock() {
+      if (this.isLoading) return;
+      
+      this.isLoading = true;
+      this.error = '';
+      
+      try {
+        console.log('Unlocking wallet...');
+        
+        // Get the stored wallet data
+        const { wallet } = await browser.storage.local.get('wallet');
+        if (!wallet) {
+          throw new Error('No wallet found');
+        }
+        
+        // Update wallet state
+        await browser.storage.local.set({ 
+          walletState: {
+            isLocked: false,
+            address: wallet.address
+          }
+        });
+        
+        // Update session state
+        await browser.storage.session.set({ isLoggedIn: true });
+        
+        console.log('Wallet unlocked, sending result...');
+        
+        // Send success message back to background script
+        if (this.requestId) {
+          await browser.runtime.sendMessage({
+            type: 'UNLOCK_RESULT',
+            id: parseInt(this.requestId),
+            success: true
+          });
+          
+          // Show the connect approval page
+          window.location.hash = `/connect?id=${this.requestId}`;
+        } else {
+          // If no request ID, just close the window
+          const currentWindow = await browser.windows.getCurrent();
+          if (currentWindow) {
+            await browser.windows.remove(currentWindow.id);
+          } else {
+            window.close();
+          }
+        }
+      } catch (error) {
+        console.error('Failed to unlock wallet:', error);
+        this.error = error.message || 'Failed to unlock wallet';
+        
+        // Send error message back to background script
+        if (this.requestId) {
+          await browser.runtime.sendMessage({
+            type: 'UNLOCK_RESULT',
+            id: parseInt(this.requestId),
+            success: false,
+            error: this.error
+          });
+        }
+      } finally {
+        this.isLoading = false;
+      }
     }
-    
-    // Close the popup after successful unlock
-    window.close();
-  } catch (err) {
-    error.value = err.message;
-  } finally {
-    isLoading.value = false;
   }
 };
 </script>
 
 <style scoped>
 .unlock-page {
-  padding: 20px;
+  padding: 2rem;
+  max-width: 400px;
+  margin: 0 auto;
+}
+
+h2 {
+  text-align: center;
+  margin-bottom: 2rem;
+  color: #333;
 }
 
 .form-group {
-  margin-bottom: 15px;
+  margin-bottom: 1.5rem;
 }
 
 label {
   display: block;
-  margin-bottom: 5px;
+  margin-bottom: 0.5rem;
+  color: #666;
 }
 
 input {
   width: 100%;
-  padding: 8px;
+  padding: 0.75rem;
   border: 1px solid #ddd;
   border-radius: 4px;
+  font-size: 1rem;
+}
+
+input:focus {
+  outline: none;
+  border-color: #4CAF50;
+  box-shadow: 0 0 0 2px rgba(76, 175, 80, 0.2);
+}
+
+input:disabled {
+  background-color: #f5f5f5;
+  cursor: not-allowed;
 }
 
 button {
   width: 100%;
-  padding: 10px;
-  background: #4CAF50;
+  padding: 0.75rem;
+  background-color: #4CAF50;
   color: white;
   border: none;
   border-radius: 4px;
+  font-size: 1rem;
   cursor: pointer;
+  transition: background-color 0.2s;
+}
+
+button:hover:not(:disabled) {
+  background-color: #45a049;
 }
 
 button:disabled {
-  background: #ccc;
+  background-color: #cccccc;
+  cursor: not-allowed;
 }
 
 .error {
-  color: red;
-  margin-top: 10px;
+  color: #f44336;
+  margin-bottom: 1rem;
+  font-size: 0.875rem;
 }
 </style>

@@ -29,17 +29,16 @@
 
 <script setup>
 import { ref, onMounted } from 'vue'
-import { useStore } from 'vuex'
+import browser from 'webextension-polyfill'
 import defaultFavicon from '../assets/default-favicon.svg'
 
-const store = useStore()
 const showModal = ref(false)
 const sites = ref([])
 
 const loadConnectedSites = async () => {
   try {
-    const connectedSites = await store.dispatch('wallet/getConnectedSites')
-    sites.value = connectedSites
+    const { connectedSites = [] } = await browser.storage.local.get('connectedSites')
+    sites.value = connectedSites.sort((a, b) => b.connectedAt - a.connectedAt)
   } catch (error) {
     console.error('Failed to load connected sites:', error)
   }
@@ -47,8 +46,19 @@ const loadConnectedSites = async () => {
 
 const disconnectSite = async (origin) => {
   try {
-    await store.dispatch('wallet/disconnectSite', origin)
-    await loadConnectedSites()
+    const { connectedSites = [] } = await browser.storage.local.get('connectedSites')
+    const updatedSites = connectedSites.filter(site => site.origin !== origin)
+    await browser.storage.local.set({ connectedSites: updatedSites })
+    sites.value = updatedSites
+
+    // Notify content script to remove connection
+    const tabs = await browser.tabs.query({ url: origin + '/*' })
+    tabs.forEach(tab => {
+      browser.tabs.sendMessage(tab.id, {
+        type: 'DISCONNECT_SITE',
+        origin
+      })
+    })
   } catch (error) {
     console.error('Failed to disconnect site:', error)
   }
@@ -58,9 +68,9 @@ const closeModal = () => {
   showModal.value = false
 }
 
-const open = () => {
+const open = async () => {
   showModal.value = true
-  loadConnectedSites()
+  await loadConnectedSites()
 }
 
 defineExpose({

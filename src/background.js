@@ -17,20 +17,9 @@ const extensionState = {
 // Wallet state
 let walletState = {
   isLocked: true,
-  address: null
+  address: null,
+  network: 'testnet'
 };
-
-// Handle browser startup
-browser.runtime.onStartup.addListener(async () => {
-  console.log('Browser started, initializing...');
-  await initializeState();
-});
-
-// Initialize when installed or updated
-browser.runtime.onInstalled.addListener(async (details) => {
-  console.log('Extension installed/updated:', details.reason);
-  await initializeState();
-});
 
 // Initialize connection and state
 async function initializeState() {
@@ -58,179 +47,197 @@ async function initializeState() {
     }
     
     if (data.walletState) {
-      walletState = data.walletState;
+      walletState = {
+        ...data.walletState,
+        network: 'testnet'  // Ensure we're on testnet
+      };
+    }
+
+    // Load the wallet data if available
+    if (data.wallet) {
+      walletState.address = data.wallet.address;
     }
     
     console.log('Extension state initialized:', extensionState);
   } catch (error) {
     console.error('Failed to initialize extension state:', error);
+    // Even if there's an error, mark as initialized to prevent blocking
+    extensionState.isInitialized = true;
   }
 }
 
-// Handle content script connection
-browser.runtime.onConnect.addListener((port) => {
-  console.log('New connection from content script:', port.name);
-  
-  port.onMessage.addListener(async (message) => {
-    console.log('Received message from content script:', message);
-    
-    try {
-      let response;
-      
-      switch (message.type) {
-        case 'VERUS_CONNECT_REQUEST':
-          response = await handleConnect(message, port.sender);
-          break;
-          
-        case 'VERUS_GET_ACCOUNTS':
-          response = await handleGetAccounts(port.sender);
-          break;
-          
-        default:
-          console.warn('Unknown message type:', message.type);
-          return;
-      }
-      
-      port.postMessage({
-        id: message.id,
-        result: response
-      });
-    } catch (error) {
-      console.error('Error handling content script message:', error);
-      port.postMessage({
-        id: message.id,
-        error: error.message
-      });
-    }
-  });
-  
-  port.onDisconnect.addListener(() => {
-    console.log('Content script disconnected:', port.name);
-  });
+// Initialize immediately when script loads
+initializeState().catch(error => {
+  console.error('Failed to initialize on load:', error);
+  // Ensure we're initialized even on error
+  extensionState.isInitialized = true;
 });
 
-// Handle connection request
-async function handleConnect(request, sender) {
-  const origin = sender.origin || sender.url;
-  console.log('Processing connect request from:', origin);
-  
-  if (!extensionState.isInitialized) {
-    throw new Error('Extension not initialized');
-  }
-  
-  if (!extensionState.hasWallet) {
-    throw new Error('No wallet configured');
-  }
-  
-  if (!extensionState.isLoggedIn) {
-    throw new Error('Wallet is locked');
-  }
-  
-  return browser.runtime.sendMessage({
-    type: 'VERUS_CONNECT_REQUEST'
-  });
-}
+// Handle browser startup
+browser.runtime.onStartup.addListener(async () => {
+  console.log('Browser started, initializing...');
+  await initializeState();
+});
 
-// Handle get accounts request
-async function handleGetAccounts(sender) {
-  const origin = sender.origin || sender.url;
-  
-  if (!extensionState.connectedSites.has(origin)) {
-    return [];
-  }
-  
-  const wallet = await browser.storage.local.get('wallet');
-  return wallet.address ? [wallet.address] : [];
-}
+// Initialize when installed or updated
+browser.runtime.onInstalled.addListener(async (details) => {
+  console.log('Extension installed/updated:', details.reason);
+  await initializeState();
+});
+
+// Create a promise resolver map for handling async responses
+const promiseResolvers = new Map();
+let requestId = 0;
 
 // Message handling
 browser.runtime.onMessage.addListener((message, sender) => {
   console.log('[Verus Background] Received message:', message);
   
   if (message.type === 'VERUS_CONNECT_REQUEST') {
-    if (walletState.isLocked) {
-      // Create a popup to unlock the wallet
-      return browser.windows.create({
-        url: 'popup.html#/unlock',
-        type: 'popup',
-        width: 400,
-        height: 600
-      }).then((popup) => {
-        // Return a promise that resolves when the wallet is unlocked
-        return new Promise((resolve) => {
-          const listener = (changes, namespace) => {
-            if (namespace === 'local' && changes.walletState) {
-              const newState = changes.walletState.newValue;
-              if (!newState.isLocked) {
-                browser.storage.onChanged.removeListener(listener);
-                browser.windows.remove(popup.id);
-                resolve({
-                  result: {
-                    address: newState.address
-                  }
-                });
-              }
-            }
-          };
+    return (async () => {
+      try {
+        if (!extensionState.isInitialized) {
+          console.log('Extension not initialized yet, initializing now...');
+          await initializeState();
+        }
+        
+        if (!extensionState.hasWallet) {
+          return { error: 'No wallet configured' };
+        }
+        
+        // Create a unique request ID
+        const id = requestId++;
+        
+        // Create a promise that will resolve when the connection is approved/rejected
+        const connectionPromise = new Promise((resolve, reject) => {
+          const timeoutId = setTimeout(() => {
+            promiseResolvers.delete(id);
+            reject(new Error('Connection request timed out'));
+          }, 300000); // 5 minute timeout
           
-          browser.storage.onChanged.addListener(listener);
-          
-          // Also listen for popup close
-          browser.windows.onRemoved.addListener(function closeListener(windowId) {
-            if (windowId === popup.id) {
-              browser.storage.onChanged.removeListener(listener);
-              browser.windows.onRemoved.removeListener(closeListener);
-              resolve({
-                error: 'User cancelled'
-              });
+          promiseResolvers.set(id, {
+            resolve: (result) => {
+              clearTimeout(timeoutId);
+              promiseResolvers.delete(id);
+              resolve(result);
+            },
+            reject: (error) => {
+              clearTimeout(timeoutId);
+              promiseResolvers.delete(id);
+              reject(error);
             }
           });
         });
-      }).catch(error => {
-        console.error('[Verus Background] Error creating popup:', error);
+        
+        if (!extensionState.isLoggedIn) {
+          // Open the unlock popup with the request ID
+          await browser.windows.create({
+            url: `popup.html#/unlock?id=${id}&origin=${encodeURIComponent(sender.tab.url)}`,
+            type: 'popup',
+            width: 400,
+            height: 600
+          });
+        } else {
+          // If already logged in, show connect approval directly
+          await browser.windows.create({
+            url: `popup.html#/connect?id=${id}&origin=${encodeURIComponent(sender.tab.url)}`,
+            type: 'popup',
+            width: 400,
+            height: 600
+          });
+        }
+        
+        try {
+          // Wait for the connection approval
+          await connectionPromise;
+          
+          // Get the current wallet data
+          const { wallet } = await browser.storage.local.get('wallet');
+          if (!wallet || !wallet.address) {
+            return { error: 'No wallet address available' };
+          }
+          
+          // Store the connected site
+          const origin = new URL(sender.tab.url).origin;
+          const { connectedSites = [] } = await browser.storage.local.get('connectedSites');
+          
+          if (!connectedSites.some(site => site.origin === origin)) {
+            const favicon = sender.tab.favIconUrl || null;
+            const updatedSites = [...connectedSites, { 
+              origin, 
+              favicon,
+              connectedAt: Date.now() 
+            }];
+            
+            await browser.storage.local.set({ connectedSites: updatedSites });
+          }
+          
+          return {
+            result: {
+              address: wallet.address,
+              network: walletState.network
+            }
+          };
+        } catch (error) {
+          return { error: error.message };
+        }
+      } catch (error) {
+        console.error('[Verus Background] Error:', error);
+        return { error: error.message };
+      }
+    })();
+  }
+  
+  if (message.type === 'CONNECT_RESPONSE') {
+    const resolver = promiseResolvers.get(parseInt(message.id));
+    if (resolver) {
+      if (message.approved) {
+        resolver.resolve();
+      } else {
+        resolver.reject(new Error('Connection rejected by user'));
+      }
+    }
+    return true;
+  }
+  
+  if (message.type === 'VERUS_GET_ACCOUNTS') {
+    return (async () => {
+      try {
+        const origin = sender.origin || sender.url;
+        if (!extensionState.connectedSites.has(origin)) {
+          return { result: [] };
+        }
+        
+        // Get the current wallet data
+        const { wallet } = await browser.storage.local.get('wallet');
+        if (!wallet || !wallet.address) {
+          return { result: [] };
+        }
+        
         return {
-          error: error.message
+          result: [wallet.address]
         };
-      });
-    } else {
-      return Promise.resolve({
-        result: {
-          address: walletState.address
-        }
-      });
-    }
+      } catch (error) {
+        console.error('[Verus Background] Error:', error);
+        return { error: error.message };
+      }
+    })();
   }
   
-  if (message.type === 'UNLOCK_WALLET') {
-    try {
-      // Here you would normally verify the password
-      // For now, we'll just simulate unlocking
-      walletState = {
-        isLocked: false,
-        address: 'RTest1234567890'
-      };
-      
-      // Save state
-      return browser.storage.local.set({ walletState }).then(() => ({
-        result: {
-          success: true
-        }
-      }));
-    } catch (error) {
-      console.error('[Verus Background] Error unlocking wallet:', error);
-      return Promise.resolve({
-        error: error.message
-      });
+  if (message.type === 'UNLOCK_RESULT') {
+    const { id, success, error } = message;
+    console.log('[Verus Background] Unlock result:', { id, success, error });
+    
+    const resolver = promiseResolvers.get(id);
+    if (resolver) {
+      if (success) {
+        resolver.resolve();
+      } else {
+        resolver.reject(new Error(error || 'Unlock failed'));
+      }
     }
+    return true;
   }
   
-  // Return true to indicate we'll respond asynchronously
-  return true;
-});
-
-// Initialize wallet state from storage
-browser.storage.local.get('walletState').then((result) => {
-  if (result.walletState) {
-    walletState = result.walletState;
-  }
+  return false;
 });
