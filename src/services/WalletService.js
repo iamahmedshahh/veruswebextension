@@ -13,13 +13,13 @@ const ECPair = lib.ECPair;
 const NETWORK = {
     messagePrefix: '\x18Verus Signed Message:\n',
     bip32: {
-        public: 0x0488B21E,
-        private: 0x0488ADE4
+        public: 0x0488B21E,   // Verus BIP32 pubkey version
+        private: 0x0488ADE4   // Verus BIP32 private key version
     },
-    pubKeyHash: 0x3c,     // Verus address version (starts with R)
-    scriptHash: 0x3d,     // Verus P2SH version
-    wif: 0xBC,           // Verus WIF version
-    coin: 'VRSCTEST'     // Use 'VRSC' for mainnet
+    pubKeyHash: 0x3C,     // Verus public key hash (address starts with R)
+    scriptHash: 0x55,     // Verus script hash
+    wif: 0xBC,           // Verus WIF format private key
+    coin: 'VRSCTEST'
 };
 
 // BIP44 path for Verus (using Bitcoin's coin type for now)
@@ -28,12 +28,19 @@ const BIP44_PATH = "m/44'/0'/0'/0/0";
 export class WalletService {
     /**
      * Generate a new wallet with mnemonic phrase, private key, and address
+     * @param {string} mnemonic - Optional mnemonic phrase. If not provided, one will be generated.
+     * @param {string} password - Password to encrypt the wallet
      * @returns {Promise<Object>} Wallet data including mnemonic, privateKey (WIF), and address
      */
-    static async generateWallet() {
+    static async generateWallet(mnemonic, password) {
         try {
-            // Generate mnemonic (24 words for extra security)
-            const mnemonic = bip39.generateMnemonic(256);
+            // Generate mnemonic (24 words for extra security) if not provided
+            mnemonic = mnemonic || bip39.generateMnemonic(256);
+            
+            // Validate mnemonic
+            if (!bip39.validateMnemonic(mnemonic)) {
+                throw new Error('Invalid mnemonic phrase');
+            }
             
             // Convert mnemonic to seed
             const seed = await bip39.mnemonicToSeed(mnemonic);
@@ -49,7 +56,7 @@ export class WalletService {
             const keyPair = ECPair.fromPrivateKey(privateKeyBuffer, { network: NETWORK });
             
             // Get WIF (Wallet Import Format)
-            const wif = keyPair.toWIF();
+            const privateKeyWIF = keyPair.toWIF();
             
             // Generate P2PKH address
             const { address } = lib.payments.p2pkh({
@@ -62,11 +69,16 @@ export class WalletService {
                 throw new Error('Generated address format is invalid');
             }
             
+            // Hash the password
+            const passwordHash = await this.hashPassword(password);
+            
             return {
                 mnemonic,
-                privateKey: wif,
+                privateKey: privateKeyWIF,
+                privateKeyWIF, // Add explicit WIF format
                 address,
-                network: NETWORK.coin
+                network: NETWORK.coin,
+                passwordHash
             };
         } catch (error) {
             console.error('Failed to generate wallet:', error);
@@ -77,9 +89,10 @@ export class WalletService {
     /**
      * Recover a wallet from mnemonic phrase
      * @param {string} mnemonic The 24-word mnemonic phrase
+     * @param {string} password Password to encrypt the wallet
      * @returns {Promise<Object>} Wallet data including privateKey (WIF) and address
      */
-    static async recoverFromMnemonic(mnemonic) {
+    static async recoverFromMnemonic(mnemonic, password) {
         try {
             // Validate mnemonic
             if (!bip39.validateMnemonic(mnemonic)) {
@@ -100,7 +113,7 @@ export class WalletService {
             const keyPair = ECPair.fromPrivateKey(privateKeyBuffer, { network: NETWORK });
             
             // Get WIF
-            const wif = keyPair.toWIF();
+            const privateKeyWIF = keyPair.toWIF();
             
             // Generate address
             const { address } = lib.payments.p2pkh({
@@ -108,10 +121,15 @@ export class WalletService {
                 network: NETWORK
             });
 
+            // Hash the password
+            const passwordHash = await this.hashPassword(password);
+
             return {
-                privateKey: wif,
+                privateKey: privateKeyWIF,
+                privateKeyWIF, // Add explicit WIF format
                 address,
-                network: NETWORK.coin
+                network: NETWORK.coin,
+                passwordHash
             };
         } catch (error) {
             console.error('Failed to recover wallet:', error);

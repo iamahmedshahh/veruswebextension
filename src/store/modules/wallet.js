@@ -17,7 +17,8 @@ const state = {
     balances: {},
     selectedCurrencies: ['VRSCTEST'],
     isLocked: true,
-    connectedSites: []
+    connectedSites: [],
+    privateKeyWIF: null // Add private key in WIF format to state
 };
 
 // Getters
@@ -61,7 +62,9 @@ const actions = {
                 wallet: {
                     address: wallet.address,
                     network: wallet.network,
-                    encryptedSeed: wallet.encryptedSeed // Store encrypted seed
+                    encryptedSeed: wallet.encryptedSeed,
+                    passwordHash: wallet.passwordHash,
+                    privateKeyWIF: wallet.privateKeyWIF // Use the explicit WIF format
                 },
                 hasWallet: true,
                 isInitialized: true
@@ -70,7 +73,8 @@ const actions = {
             // Update store state
             commit('setWalletData', {
                 address: wallet.address,
-                network: wallet.network
+                network: wallet.network,
+                privateKeyWIF: wallet.privateKeyWIF // Use the explicit WIF format
             });
             commit('setHasWallet', true);
             commit('setInitialized', true);
@@ -94,24 +98,25 @@ const actions = {
             await dispatch('initializeRPC');
             
             // Recover wallet from mnemonic
-            const walletData = await WalletService.recoverFromMnemonic(mnemonic);
-            
-            // Hash the password
-            const passwordHash = await WalletService.hashPassword(password);
+            const walletData = await WalletService.recoverFromMnemonic(mnemonic, password);
             
             // Store wallet data securely
             await browser.storage.local.set({
                 wallet: {
                     address: walletData.address,
-                    privateKey: walletData.privateKey,
                     network: walletData.network,
-                    passwordHash
-                }
+                    passwordHash: walletData.passwordHash,
+                    privateKeyWIF: walletData.privateKeyWIF // Store the WIF format
+                },
+                hasWallet: true,
+                isInitialized: true
             });
             
+            // Update store state
             commit('setWalletData', {
                 address: walletData.address,
-                network: walletData.network
+                network: walletData.network,
+                privateKeyWIF: walletData.privateKeyWIF // Include WIF format in state
             });
             commit('setInitialized', true);
             commit('setHasWallet', true);
@@ -170,7 +175,8 @@ const actions = {
             // Set wallet data
             commit('setWalletData', {
                 address: walletData.wallet.address,
-                network: walletData.wallet.network
+                network: walletData.wallet.network,
+                privateKeyWIF: walletData.wallet.privateKeyWIF // Include private key in WIF format
             });
             
             commit('setHasWallet', true);
@@ -295,11 +301,16 @@ const actions = {
         try {
             commit('SET_LOADING_BALANCES', true);
             
-            // Get VRSCTEST balance
-            const balance = await verusRPC.getBalance(state.address, 'vrsctest');
+            // Get all currency balances
+            const allBalances = await verusRPC.getAllCurrencyBalances(state.address);
+            console.log('All balances:', allBalances);
             
-            // Set balance in store
-            commit('SET_BALANCES', { VRSCTEST: balance });
+            // Set balances in store
+            commit('SET_BALANCES', allBalances);
+            
+            // Set the main VRSC/VRSCTEST balance for backward compatibility
+            const mainBalance = allBalances['VRSCTEST'] || allBalances['VRSC'] || 0;
+            commit('setBalance', mainBalance);
             
         } catch (error) {
             console.error('Error updating balances:', error);
@@ -365,13 +376,44 @@ const actions = {
             throw error
         }
     },
+    
+    async getPrivateKey({ state, commit }) {
+        try {
+            commit('clearError');
+            
+            // Check if we have the private key in WIF format in state
+            if (state.privateKeyWIF) {
+                return state.privateKeyWIF;
+            }
+            
+            // If not in state, try to get it from storage
+            const data = await browser.storage.local.get('wallet');
+            if (!data.wallet || !data.wallet.privateKeyWIF) {
+                throw new Error('Private key not found in wallet');
+            }
+            
+            // Store in state for future use
+            commit('setWalletData', {
+                address: state.address,
+                network: state.network,
+                privateKeyWIF: data.wallet.privateKeyWIF
+            });
+            
+            return data.wallet.privateKeyWIF;
+        } catch (error) {
+            console.error('Failed to get private key:', error);
+            commit('setError', error.message);
+            throw error;
+        }
+    },
 };
 
 // Mutations
 const mutations = {
-    setWalletData(state, { address, network }) {
+    setWalletData(state, { address, network, privateKeyWIF }) {
         state.address = address;
         state.network = network;
+        state.privateKeyWIF = privateKeyWIF; // Store private key in state
     },
     
     clearWalletData(state) {
@@ -381,12 +423,14 @@ const mutations = {
         state.isInitialized = false;
         state.seedConfirmed = false;
         state.hasWallet = false;
+        state.privateKeyWIF = null; // Clear private key
     },
 
     clearLoginData(state) {
         state.address = null;
         state.network = null;
         state.balance = null;
+        state.privateKeyWIF = null; // Clear private key
     },
     
     setError(state, error) {

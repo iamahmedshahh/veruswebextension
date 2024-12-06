@@ -15,39 +15,48 @@ export class VerusRPCService {
         }
     }
 
-    async getBalance(address, currency = 'VRSC') {
+    async getBalance(address, currency = 'VRSCTEST') {
         if (!address) {
             console.error('No address provided for balance check');
             return 0;
         }
 
         try {
-            const balanceResponse = await makeRPCCall('getaddressbalance', [{
+            // Get UTXOs for more detailed balance information
+            const utxoResponse = await makeRPCCall('getaddressutxos', [{
                 addresses: [address],
-                currencynames: true,
-                includePrivate: true
+                currencynames: true
             }]);
-            console.log('Balance response for', currency, ':', balanceResponse);
-
-            let balance = 0;
-            currency = currency.toUpperCase();
-
-            if (balanceResponse) {
-                // Handle VRSC balance
-                if (currency === 'VRSC' && balanceResponse.balance) {
-                    balance = balanceResponse.balance / 100000000; // Convert from satoshis
-                }
-                
-                // Handle other currency balances
-                if (balanceResponse.currencybalance) {
-                    const currencyBalance = balanceResponse.currencybalance[currency];
-                    if (currencyBalance !== undefined) {
-                        balance = currencyBalance;
-                    }
-                }
+            
+            console.log('UTXO response for', currency, ':', utxoResponse);
+            
+            if (!utxoResponse || !Array.isArray(utxoResponse)) {
+                return 0;
             }
 
-            return balance;
+            // Filter UTXOs for the target currency
+            const relevantUtxos = utxoResponse.filter(utxo => {
+                const hasCurrencyInNames = utxo.currencynames && utxo.currencynames[currency];
+                const hasCurrencyInValues = utxo.currencyvalues && utxo.currencyvalues[currency];
+                const isNativeCurrency = currency === 'VRSCTEST';
+                const hasNativeBalance = isNativeCurrency && utxo.satoshis > 0;
+                
+                return hasCurrencyInNames || hasCurrencyInValues || hasNativeBalance;
+            });
+
+            // Calculate total balance
+            let totalBalance = 0;
+            relevantUtxos.forEach(utxo => {
+                if (currency === 'VRSCTEST') {
+                    totalBalance += (utxo.satoshis || 0) / 100000000; // Convert satoshis to VRSCTEST
+                } else {
+                    const amountFromNames = utxo.currencynames?.[currency] || 0;
+                    const amountFromValues = utxo.currencyvalues?.[currency] || 0;
+                    totalBalance += parseFloat(amountFromNames || amountFromValues);
+                }
+            });
+
+            return totalBalance;
         } catch (error) {
             console.error(`Error fetching balance for ${currency}:`, error);
             return 0;
@@ -61,28 +70,61 @@ export class VerusRPCService {
         }
 
         try {
-            const balanceResponse = await makeRPCCall('getaddressbalance', [{
+            // Get UTXOs for the address
+            const utxoResponse = await makeRPCCall('getaddressutxos', [{
                 addresses: [address],
-                currencynames: true,
-                includePrivate: true
+                currencynames: true
             }]);
 
+            // Get currency definitions
+            const currencyList = await this.listCurrencies();
+            const currencyMap = {};
+            
+            // Create a map of currency IDs to their fully qualified names
+            if (Array.isArray(currencyList)) {
+                currencyList.forEach(currency => {
+                    if (currency?.currencydefinition) {
+                        const def = currency.currencydefinition;
+                        const id = def.currencyid;
+                        const name = def.fullyqualifiedname || def.name;
+                        currencyMap[id] = name;
+                    }
+                });
+            }
+            console.log('Currency map:', currencyMap);
+
             const balances = {};
-
-            if (balanceResponse) {
-                // Handle VRSC balance
-                if (balanceResponse.balance) {
-                    balances.VRSC = balanceResponse.balance / 100000000;
-                }
-
-                // Handle other currency balances
-                if (balanceResponse.currencybalance) {
-                    Object.entries(balanceResponse.currencybalance).forEach(([currency, amount]) => {
-                        balances[currency.toUpperCase()] = amount;
-                    });
-                }
+            
+            if (!utxoResponse || !Array.isArray(utxoResponse)) {
+                return balances;
             }
 
+            // Process each UTXO
+            utxoResponse.forEach(utxo => {
+                // Handle native currency (VRSCTEST)
+                if (utxo.satoshis > 0) {
+                    const nativeCurrency = 'VRSCTEST';
+                    balances[nativeCurrency] = (balances[nativeCurrency] || 0) + (utxo.satoshis / 100000000);
+                }
+
+                // Handle other currencies from currencynames
+                if (utxo.currencynames) {
+                    Object.entries(utxo.currencynames).forEach(([currencyId, amount]) => {
+                        const currencyName = currencyMap[currencyId] || currencyId;
+                        balances[currencyName] = (balances[currencyName] || 0) + parseFloat(amount);
+                    });
+                }
+
+                // Handle currencies from currencyvalues
+                if (utxo.currencyvalues) {
+                    Object.entries(utxo.currencyvalues).forEach(([currencyId, amount]) => {
+                        const currencyName = currencyMap[currencyId] || currencyId;
+                        balances[currencyName] = (balances[currencyName] || 0) + parseFloat(amount);
+                    });
+                }
+            });
+
+            console.log('Processed balances:', balances);
             return balances;
         } catch (error) {
             console.error('Error fetching all currency balances:', error);
@@ -93,20 +135,17 @@ export class VerusRPCService {
     async listCurrencies() {
         try {
             const response = await makeRPCCall('listcurrencies');
-            const currencies = new Set(['VRSCTEST']);
-
-            if (Array.isArray(response)) {
-                response.forEach(currency => {
-                    if (currency?.currencydefinition?.name) {
-                        currencies.add(currency.currencydefinition.name.toUpperCase());
-                    }
-                });
+            console.log('Currency list response:', response);
+            
+            if (!Array.isArray(response)) {
+                console.error('Invalid currency list response:', response);
+                return [];
             }
 
-            return Array.from(currencies);
+            return response;
         } catch (error) {
             console.error('Failed to list currencies:', error);
-            return ['VRSCTEST'];
+            return [];
         }
     }
 }

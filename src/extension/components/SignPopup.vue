@@ -19,11 +19,11 @@
                 </div>
                 <div class="detail-row">
                     <span class="label">Amount:</span>
-                    <span class="value">{{ transaction.amount }} VRSC</span>
+                    <span class="value">{{ transaction.amount }} VRSCTEST</span>
                 </div>
                 <div class="detail-row">
                     <span class="label">Fee:</span>
-                    <span class="value">{{ transaction.fee }} VRSC</span>
+                    <span class="value">{{ transaction.fee }} VRSCTEST</span>
                 </div>
             </div>
 

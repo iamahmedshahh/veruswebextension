@@ -7,7 +7,7 @@
             @settings-click="showSettings = true"
         />
 
-        <div v-if="loading" class="loading-container">
+        <div v-if="walletLoading" class="loading-container">
             <div class="loading-spinner"></div>
             <p>Loading wallet data...</p>
         </div>
@@ -47,6 +47,16 @@
                                 </button>
                             </div>
                         </div>
+                        <div class="action-buttons">
+                            <button class="action-btn send" @click="handleSend(currency)">
+                                <i class="fas fa-arrow-up"></i>
+                                Send
+                            </button>
+                            <button class="action-btn receive" @click="handleReceive(currency)">
+                                <i class="fas fa-arrow-down"></i>
+                                Receive
+                            </button>
+                        </div>
                     </div>
                 </div>
 
@@ -77,6 +87,65 @@
                 />
             </div>
         </div>
+
+        <div v-if="showSendModal" class="modal-overlay">
+            <div class="modal-container send-modal">
+                <div class="send-modal-header">
+                    <h3>Send {{ selectedCurrencyForAction }}</h3>
+                    <button class="close-button" @click="showSendModal = false">&times;</button>
+                </div>
+                <form @submit.prevent="executeSend" class="send-form">
+                    <div class="form-group">
+                        <label for="recipientAddress">Recipient Address:</label>
+                        <input 
+                            id="recipientAddress"
+                            v-model="recipientAddress"
+                            type="text"
+                            placeholder="Enter recipient address"
+                            :disabled="isLoading"
+                            required
+                        />
+                    </div>
+                    <div class="form-group">
+                        <label for="amount">Amount</label>
+                        <input 
+                            id="amount"
+                            v-model="amount"
+                            type="number"
+                            step="0.00000001"
+                            placeholder="Enter amount"
+                            :disabled="isLoading"
+                            @input="updateEstimatedFee"
+                            required
+                        />
+                    </div>
+                    <div v-if="estimatedFee" class="fee-info">
+                        Estimated Fee: {{ estimatedFee }} {{ selectedCurrencyForAction }}
+                    </div>
+                    <div v-if="error" class="error-message">{{ error }}</div>
+                    <button 
+                        type="submit"
+                        class="send-button"
+                        :disabled="isLoading || !recipientAddress || !amount"
+                    >
+                        <i v-if="isLoading" class="fas fa-spinner fa-spin"></i>
+                        <span v-else>Send</span>
+                    </button>
+                </form>
+            </div>
+        </div>
+
+        <div v-if="showReceiveModal" class="modal-overlay">
+            <div class="modal-container">
+                <div class="modal-header">
+                    <h3>Receive {{ selectedCurrencyForAction }}</h3>
+                    <button class="close-button" @click="showReceiveModal = false">&times;</button>
+                </div>
+                <div class="modal-body">
+                    <p>Your receive address is: {{ address }}</p>
+                </div>
+            </div>
+        </div>
     </div>
 </template>
 
@@ -87,6 +156,7 @@ import WalletHeader from './WalletHeader.vue';
 import LoadingBar from './LoadingBar.vue';
 import Settings from './Settings.vue';
 import CurrencySelector from './CurrencySelector.vue';
+import { sendCurrency, estimateFee, validateAddress } from '../utils/transaction';
 
 export default {
     name: 'WalletDashboard',
@@ -102,9 +172,17 @@ export default {
         const store = useStore();
         const showSettings = ref(false);
         const showCurrencySelector = ref(false);
+        const showSendModal = ref(false);
+        const showReceiveModal = ref(false);
+        const selectedCurrencyForAction = ref('');
+        const recipientAddress = ref('');
+        const amount = ref('');
+        const error = ref('');
+        const isLoading = ref(false);
+        const estimatedFee = ref(0);
 
-        const loading = computed(() => store.state.wallet.loading);
-        const error = computed(() => store.state.wallet.error);
+        const walletLoading = computed(() => store.state.wallet.loading);
+        const walletError = computed(() => store.state.wallet.error);
         const address = computed(() => store.state.wallet.address);
         const isLocked = computed(() => store.state.wallet.isLocked);
         const selectedCurrencies = computed(() => store.state.currencies.selectedCurrencies);
@@ -134,6 +212,100 @@ export default {
             store.dispatch('currencies/unselectCurrency', currency);
         };
 
+        const handleSend = (currency) => {
+            selectedCurrencyForAction.value = currency;
+            showSendModal.value = true;
+        };
+
+        const handleReceive = (currency) => {
+            selectedCurrencyForAction.value = currency;
+            showReceiveModal.value = true;
+        };
+
+        const executeSend = async () => {
+            try {
+                console.log('Starting send transaction...');
+                error.value = '';
+                isLoading.value = true;
+                
+                // Validate inputs
+                console.log('Validating address:', recipientAddress.value);
+                if (!validateAddress(recipientAddress.value)) {
+                    throw new Error('Invalid recipient address');
+                }
+                
+                const amountNum = parseFloat(amount.value);
+                console.log('Validating amount:', amountNum);
+                if (isNaN(amountNum) || amountNum <= 0) {
+                    throw new Error('Invalid amount');
+                }
+                
+                // Get current wallet data from store
+                console.log('Getting wallet data...');
+                const fromAddress = store.state.wallet.address;
+                if (!fromAddress) {
+                    throw new Error('Sender address not found in wallet');
+                }
+                
+                console.log('Getting private key...');
+                const privateKey = await store.dispatch('wallet/getPrivateKey');
+                if (!privateKey) {
+                    throw new Error('Private key not available. Please check if wallet is unlocked');
+                }
+                
+                // Send transaction
+                console.log('Sending transaction...');
+                const result = await sendCurrency(
+                    fromAddress,
+                    recipientAddress.value,
+                    amountNum,
+                    privateKey,
+                    selectedCurrencyForAction.value
+                );
+                
+                console.log('Transaction sent successfully:', result);
+                
+                // Update balances after successful send
+                await store.dispatch('currencies/updateBalances');
+                
+                // Close modal and reset form
+                showSendModal.value = false;
+                recipientAddress.value = '';
+                amount.value = '';
+                
+                // Show success notification
+                store.commit('notification/show', {
+                    type: 'success',
+                    message: `Transaction sent successfully! TXID: ${result.txid}`
+                });
+                
+            } catch (err) {
+                console.error('Send transaction failed:', err);
+                error.value = err.message;
+                store.commit('notification/show', {
+                    type: 'error',
+                    message: `Failed to send transaction: ${err.message}`
+                });
+            } finally {
+                isLoading.value = false;
+            }
+        };
+
+        const updateEstimatedFee = async () => {
+            if (!amount.value || !address.value) return;
+            
+            try {
+                const fee = await estimateFee(
+                    address.value,
+                    parseFloat(amount.value),
+                    selectedCurrencyForAction.value
+                );
+                estimatedFee.value = fee;
+            } catch (err) {
+                console.error('Error estimating fee:', err);
+            }
+        };
+
         onMounted(async () => {
             try {
                 await store.dispatch('wallet/loadWalletData');
@@ -144,20 +316,31 @@ export default {
         });
 
         return {
-            loading,
-            error,
+            walletLoading,
+            walletError,
             address,
             isLocked,
             showSettings,
             showCurrencySelector,
+            showSendModal,
+            showReceiveModal,
             selectedCurrencies,
+            selectedCurrencyForAction,
+            recipientAddress,
+            amount,
+            estimatedFee,
+            isLoading,
             isLoadingBalances,
             canAddMoreCurrencies,
             getBalance,
             formatBalance,
             copyToClipboard,
             handleCurrencySelected,
-            removeCurrency
+            removeCurrency,
+            handleSend,
+            handleReceive,
+            executeSend,
+            updateEstimatedFee
         };
     }
 };
@@ -337,5 +520,114 @@ export default {
 .add-icon {
     font-size: 2rem;
     margin-bottom: 0.5rem;
+}
+
+.action-buttons {
+    display: flex;
+    gap: 8px;
+    margin-top: 12px;
+}
+
+.action-btn {
+    flex: 1;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+    padding: 8px;
+    border: none;
+    border-radius: 8px;
+    font-size: 14px;
+    font-weight: 500;
+    cursor: pointer;
+    transition: opacity 0.2s;
+}
+
+.action-btn:hover {
+    opacity: 0.9;
+}
+
+.action-btn.send {
+    background-color: #4CAF50;
+    color: white;
+}
+
+.action-btn.receive {
+    background-color: #2196F3;
+    color: white;
+}
+
+.action-btn i {
+    font-size: 12px;
+}
+
+.send-modal {
+    background: white;
+    border-radius: 12px;
+    padding: 20px;
+    width: 90%;
+    max-width: 400px;
+}
+
+.send-modal-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 20px;
+}
+
+.send-modal-header h3 {
+    margin: 0;
+}
+
+.close-button {
+    background: none;
+    border: none;
+    font-size: 20px;
+    cursor: pointer;
+}
+
+.form-group {
+    margin-bottom: 15px;
+}
+
+.form-group label {
+    display: block;
+    margin-bottom: 5px;
+    color: #666;
+}
+
+.form-group input {
+    width: 100%;
+    padding: 8px;
+    border: 1px solid #ddd;
+    border-radius: 4px;
+}
+
+.fee-info {
+    font-size: 14px;
+    color: #666;
+    margin-bottom: 15px;
+}
+
+.error-message {
+    color: #f44336;
+    font-size: 14px;
+    margin-bottom: 15px;
+}
+
+.send-button {
+    width: 100%;
+    padding: 10px;
+    background: #4CAF50;
+    color: white;
+    border: none;
+    border-radius: 4px;
+    cursor: pointer;
+}
+
+.send-button:disabled {
+    opacity: 0.6;
+    cursor: not-allowed;
 }
 </style>

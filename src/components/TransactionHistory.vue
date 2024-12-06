@@ -6,18 +6,18 @@ const transactions = ref([
   {
     id: 1,
     type: 'received',
-    amount: '100 VRSC',
-    from: 'RX...abc',
-    to: 'RV...xyz',
+    amount: '100 VRSCTEST',
+    from: 'tX...abc',
+    to: 'tV...xyz',
     timestamp: '2024-01-20 10:30',
     status: 'confirmed'
   },
   {
     id: 2,
     type: 'sent',
-    amount: '50 VRSC',
-    from: 'RV...xyz',
-    to: 'RA...123',
+    amount: '50 VRSCTEST',
+    from: 'tV...xyz',
+    to: 'tA...123',
     timestamp: '2024-01-19 15:45',
     status: 'confirmed'
   }

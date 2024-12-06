@@ -1,18 +1,28 @@
 <script setup>
-import { ref, onMounted, onUnmounted } from 'vue';
+import { ref, onMounted, onUnmounted, computed } from 'vue';
 import { useStore } from 'vuex';
 
 const props = defineProps({
   address: {
     type: String,
     required: true
+  },
+  currency: {
+    type: String,
+    default: 'VRSCTEST'
   }
 });
 
 const store = useStore();
-const balance = ref('0.00000000');
 const isLoading = ref(false);
 const error = ref('');
+
+// Get balance from store
+const balance = computed(() => {
+  const balances = store.state.wallet.balances;
+  const currencyBalance = balances[props.currency] || 0;
+  return currencyBalance.toFixed(8); // Format to 8 decimal places
+});
 
 // Update balance periodically
 let balanceInterval;
@@ -35,8 +45,7 @@ async function updateBalance() {
   error.value = '';
   
   try {
-    const result = await store.dispatch('wallet/getBalance', props.address);
-    balance.value = (result / 100000000).toFixed(8); // Convert from satoshis
+    await store.dispatch('wallet/updateBalances');
   } catch (err) {
     console.error('Failed to update balance:', err);
     error.value = 'Failed to update balance';
@@ -62,7 +71,7 @@ async function copyAddress() {
     </div>
     
     <div class="balance-amount" :class="{ loading: isLoading }">
-      {{ balance }} <span class="currency">VRSC</span>
+      {{ balance }} <span class="currency">{{ props.currency }}</span>
     </div>
     
     <div v-if="error" class="error-message">

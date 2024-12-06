@@ -64,7 +64,7 @@
         <div class="modal-body">
           <p>Thank you for considering a donation to support Verus development!</p>
           <div class="donate-address">
-            <span class="label">VRSC and KMD Address:</span>
+            <span class="label">VRSC:</span>
             <div class="address-container">
               <code>{{ donateAddress }}</code>
               <div class="copy-icon" @click="copyDonateAddress" title="Copy Address">
