@@ -8,17 +8,7 @@ import HDKey from 'hdkey';
 const lib = bitgo.default;
 
 // Network configuration for Verus
-const NETWORK = {
-    messagePrefix: '\x18Verus Signed Message:\n',
-    bip32: {
-        public: 0x0488B21E,
-        private: 0x0488ADE4
-    },
-    pubKeyHash: 0x3c,     // Verus address version (starts with R)
-    scriptHash: 0x3d,     // Verus P2SH version
-    wif: 0xBC,           // Verus WIF version
-    coin: 'VRSCTEST'
-};
+const NETWORK = lib.networks.verustest;
 
 // BIP44 path for Verus (using Bitcoin's coin type for now)
 const BIP44_PATH = "m/44'/0'/0'/0/0";

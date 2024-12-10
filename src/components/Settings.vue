@@ -73,7 +73,7 @@
             </button>
             <button
               v-if="showPrivateKey"
-              @click="copyToClipboard(walletInfo.privateKey, 'privateKey')"
+              @click="copyToClipboard(walletInfo.privateKeyWIF, 'privateKey')"
               class="btn-secondary"
             >
               {{ privateKeyCopied ? 'Copied!' : 'Copy' }}
@@ -123,8 +123,8 @@ export default {
     });
 
     const maskedPrivateKey = computed(() => {
-      if (!walletInfo.value?.privateKey) return '';
-      return showPrivateKey.value ? walletInfo.value.privateKey : '•'.repeat(52);
+      if (!walletInfo.value?.privateKeyWIF) return '';
+      return showPrivateKey.value ? walletInfo.value.privateKeyWIF : '•'.repeat(52);
     });
 
     // Start countdown timer
@@ -166,7 +166,12 @@ export default {
           return;
         }
 
-        walletInfo.value = data.wallet;
+        // Get wallet info from store
+        walletInfo.value = {
+          privateKeyWIF: data.wallet.privateKeyWIF,
+          mnemonic: data.wallet.mnemonic
+        };
+        
         isVerified.value = true;
         startCountdown();
 

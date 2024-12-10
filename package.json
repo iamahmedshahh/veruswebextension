@@ -11,7 +11,7 @@
     "test:address": "node --experimental-modules test/test-address.js"
   },
   "dependencies": {
-    "@bitgo/utxo-lib": "^3.1.0",
+    "@bitgo/utxo-lib": "git+https://github.com/VerusCoin/BitGoJS.git#utxo-lib-verus",
     "@fortawesome/fontawesome-free": "^6.7.1",
     "assert": "^2.1.0",
     "bcryptjs": "^2.4.3",
@@ -32,7 +32,8 @@
     "vue": "^3.3.11",
     "vue-router": "^4.5.0",
     "vuex": "^4.1.0",
-    "webextension-polyfill": "^0.10.0"
+    "webextension-polyfill": "^0.10.0",
+    "qrcode": "^1.5.4"
   },
   "devDependencies": {
     "@samrum/vite-plugin-web-extension": "^5.1.0",

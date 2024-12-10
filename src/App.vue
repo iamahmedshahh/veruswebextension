@@ -6,6 +6,7 @@ import browser from 'webextension-polyfill';
 import WalletDashboard from './components/WalletDashboard.vue';
 import WalletSetup from './components/WalletSetup.vue';
 import Login from './components/Login.vue';
+import SessionService from './store/services/SessionService';
 
 const store = useStore();
 const route = useRoute();
@@ -20,6 +21,9 @@ const loading = computed(() => store.getters['wallet/isLoading']);
 onMounted(async () => {
   try {
     console.log('App mounted, initializing...');
+    
+    // Initialize session service
+    SessionService.init();
     
     // Load wallet data first
     await store.dispatch('wallet/loadWallet');

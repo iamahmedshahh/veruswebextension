@@ -1,18 +1,12 @@
 import { makeRPCCall } from './verus-rpc';
-import * as bitgo from '@bitgo/utxo-lib';
+import * as bitcoin from '@bitgo/utxo-lib';
 
 // Network configuration for Verus
-const NETWORK = {
-    messagePrefix: '\x18Verus Signed Message:\n',
-    bip32: {
-        public: 0x0488B21E,   // Verus BIP32 pubkey version
-        private: 0x0488ADE4   // Verus BIP32 private key version
-    },
-    pubKeyHash: 0x3C,     // Verus public key hash (address starts with R)
-    scriptHash: 0x55,     // Verus script hash
-    wif: 0xBC,           // Verus WIF format private key
-    coin: 'VRSCTEST'
-};
+const NETWORK = bitcoin.networks.verustest;
+const { ECPair, TransactionBuilder } = bitcoin;
+
+// Import BN from the library
+const BN = bitcoin.ECPair.BN;
 
 /**
  * Send currency from one address to another
@@ -27,22 +21,31 @@ export async function sendCurrency(fromAddress, toAddress, amount, privateKeyWIF
     try {
         console.log('Starting sendCurrency with params:', { fromAddress, toAddress, amount, currency });
         
+        // Test RPC connection first
+        try {
+            const testResponse = await makeRPCCall('getinfo', []);
+            console.log('RPC connection test successful:', testResponse);
+        } catch (error) {
+            console.error('RPC connection test failed:', error);
+            throw new Error('Failed to connect to Verus RPC server: ' + error.message);
+        }
+        
         // Validate private key format
         if (!privateKeyWIF) {
             throw new Error('Private key is required');
         }
 
         // Validate that the private key is in WIF format
+        let keyPair;
         try {
-            bitgo.ECPair.fromWIF(privateKeyWIF, NETWORK);
+            keyPair = ECPair.fromWIF(privateKeyWIF, NETWORK);
         } catch (error) {
             console.error('Invalid private key:', error);
             throw new Error('Invalid private key format. Must be in WIF format.');
         }
 
         // Convert amount to satoshis
-        const satoshiAmount = Math.floor(amount * 1e8);
-        console.log('Amount in satoshis:', satoshiAmount);
+        const SATS_PER_COIN = 100000000;
         
         // Step 1: Fetch UTXOs
         console.log('Fetching UTXOs for address:', fromAddress);
@@ -58,16 +61,8 @@ export async function sendCurrency(fromAddress, toAddress, amount, privateKeyWIF
         console.log('Raw UTXOs:', JSON.stringify(utxos, null, 2));
         console.log('Found UTXOs:', utxos.length);
 
-        // Filter UTXOs for the specified currency
-        const relevantUtxos = utxos.filter(utxo => {
-            if (currency === 'VRSCTEST') {
-                return !utxo.currencynames || Object.keys(utxo.currencynames).length === 0;
-            }
-            // For other currencies, check currency names and values
-            return (utxo.currencynames && utxo.currencynames[currency]) ||
-                   (utxo.currencyvalues && utxo.currencyvalues[currency]);
-        });
-
+        // Filter UTXOs with VRSCTEST balance
+        const relevantUtxos = utxos.filter(utxo => utxo.satoshis > 0);
         console.log('Relevant UTXOs:', JSON.stringify(relevantUtxos, null, 2));
         console.log('Relevant UTXOs for currency:', relevantUtxos.length);
 
@@ -75,79 +70,99 @@ export async function sendCurrency(fromAddress, toAddress, amount, privateKeyWIF
             throw new Error(`No UTXOs available for ${currency}`);
         }
 
-        // Step 2: Create transaction builder
-        const txBuilder = new bitgo.TransactionBuilder(NETWORK);
+        // Build transaction
+        console.log('Initializing transaction builder...');
+        const txBuilder = new TransactionBuilder(NETWORK);
         
-        // Step 3: Add inputs
-        let totalInput = 0;
-        relevantUtxos.forEach(utxo => {
-            // Log each UTXO value
-            console.log('Processing UTXO:', {
+        // Set version for Overwinter support
+        console.log('Setting transaction version and group ID...');
+        txBuilder.setVersion(4);
+        txBuilder.setVersionGroupId(0x892f2085);
+
+        // Add all inputs
+        console.log('Adding inputs to transaction...');
+        let runningTotal = new BN(0);
+        for (const utxo of relevantUtxos) {
+            const satoshis = new BN(utxo.satoshis);
+
+            console.log('Adding input:', {
                 txid: utxo.txid,
-                vout: utxo.vout || utxo.outputIndex,
-                value: utxo.satoshis || utxo.value || utxo.amount
+                outputIndex: utxo.outputIndex,
+                satoshis: satoshis.toString()
             });
-            
-            txBuilder.addInput(utxo.txid, utxo.vout || utxo.outputIndex);
-            
-            // Convert value to number and ensure it's in satoshis
-            let utxoValue = 0;
-            if (typeof utxo.satoshis === 'number') {
-                utxoValue = utxo.satoshis;
-            } else if (typeof utxo.value === 'number') {
-                utxoValue = utxo.value;
-            } else if (typeof utxo.amount === 'number') {
-                utxoValue = Math.floor(utxo.amount * 1e8);
-            } else if (typeof utxo.satoshis === 'string') {
-                utxoValue = parseInt(utxo.satoshis, 10);
-            } else if (typeof utxo.value === 'string') {
-                utxoValue = parseInt(utxo.value, 10);
-            } else if (typeof utxo.amount === 'string') {
-                utxoValue = Math.floor(parseFloat(utxo.amount) * 1e8);
-            }
-            
-            if (isNaN(utxoValue) || utxoValue <= 0) {
-                console.error('Invalid UTXO value:', utxo);
-                throw new Error('Invalid UTXO value encountered');
-            }
-            
-            totalInput += utxoValue;
-            console.log('Running total:', totalInput / 1e8, currency);
-        });
-
-        console.log('Total input amount:', totalInput / 1e8, currency);
-
-        // Step 4: Calculate fee and verify funds
-        const fee = 10000; // 0.0001 VRSCTEST
-        if (totalInput < satoshiAmount + fee) {
-            throw new Error(`Insufficient funds. Required: ${((satoshiAmount + fee) / 1e8).toFixed(8)} ${currency}, Available: ${(totalInput / 1e8).toFixed(8)} ${currency}`);
+            txBuilder.addInput(utxo.txid, utxo.outputIndex);
+            runningTotal = runningTotal.add(satoshis);
+            console.log('Running total:', runningTotal.toNumber() / SATS_PER_COIN, currency);
         }
 
-        // Step 5: Add outputs
-        // Main payment output
-        txBuilder.addOutput(toAddress, satoshiAmount);
+        // Calculate output amounts
+        const satoshisToSend = new BN(Math.floor(amount * SATS_PER_COIN));
+        const fee = new BN(20000); // 0.0002 VRSC fee
         
-        // Add change output if needed
-        const change = totalInput - satoshiAmount - fee;
-        if (change > 546) { // Only add change if it's more than dust amount
-            txBuilder.addOutput(fromAddress, change);
+        if (runningTotal.lt(satoshisToSend.add(fee))) {
+            throw new Error(`Insufficient funds. Required: ${satoshisToSend.add(fee).toNumber() / SATS_PER_COIN} ${currency}, Available: ${runningTotal.toNumber() / SATS_PER_COIN} ${currency}`);
         }
 
-        console.log('Transaction outputs added. Change amount:', change / 1e8, currency);
+        // Add recipient output
+        const recipientAmount = satoshisToSend.toNumber();
+        console.log('Adding recipient output:', { toAddress, amount: recipientAmount });
+        txBuilder.addOutput(toAddress, recipientAmount);
 
-        // Step 6: Sign all inputs using WIF private key
-        const keyPair = bitgo.ECPair.fromWIF(privateKeyWIF, NETWORK);
-        relevantUtxos.forEach((utxo, index) => {
-            txBuilder.sign(index, keyPair, null, 0x01, Number(utxo.satoshis || utxo.value));
-        });
+        // Calculate and add change output
+        const changeAmount = runningTotal.sub(satoshisToSend).sub(fee).toNumber();
+        if (changeAmount > 546) { // Dust threshold
+            txBuilder.addOutput(fromAddress, changeAmount);
+            console.log('Change output added:', changeAmount / SATS_PER_COIN, currency);
+        }
 
-        // Step 7: Build and serialize transaction
-        const builtTx = txBuilder.build();
-        const serializedTx = builtTx.toHex();
+        // Sign all inputs
+        console.log('Starting to sign inputs...');
+        for (let i = 0; i < relevantUtxos.length; i++) {
+            const utxo = relevantUtxos[i];
+            console.log('Signing input', i, {
+                utxo: {
+                    txid: utxo.txid,
+                    outputIndex: utxo.outputIndex,
+                    satoshis: utxo.satoshis
+                }
+            });
 
+            try {
+                // Create a hash type object
+                const hashType = bitcoin.Transaction.SIGHASH_ALL;
+                
+                // Convert to BN
+                const valueBN = new BN(utxo.satoshis);
+                console.log('Using BN value for signing:', valueBN.toString());
+
+                txBuilder.sign(
+                    i,
+                    keyPair,
+                    null,
+                    hashType,
+                    valueBN.toNumber()
+                );
+                console.log('Successfully signed input', i);
+            } catch (error) {
+                console.error('Error signing input', i, error);
+                console.error('Error details:', {
+                    errorType: error.constructor.name,
+                    message: error.message,
+                    property: error.__property,
+                    valueType: error.__value ? error.__value.constructor.name : null,
+                    stack: error.stack
+                });
+                throw error;
+            }
+        }
+
+        // Build and serialize the transaction
+        console.log('Building transaction...');
+        const tx = txBuilder.build();
+        const serializedTx = tx.toHex();
         console.log('Transaction built and serialized');
 
-        // Step 8: Broadcast transaction
+        // Broadcast transaction
         console.log('Broadcasting transaction...');
         const txid = await makeRPCCall('sendrawtransaction', [serializedTx]);
         
@@ -173,15 +188,13 @@ export async function estimateFee(fromAddress, amount, currency = 'VRSCTEST') {
             currencynames: true
         }]);
         
-        // Basic fee calculation (can be enhanced based on network conditions)
-        const baseFee = 0.0001; // 0.0001 VRSCTEST
+        const baseFee = 0.001;
         const inputCount = utxos.length;
-        const outputCount = 2; // Assuming payment + change
+        const outputCount = 2;
         
-        // Fee calculation based on transaction size
         const estimatedSize = (inputCount * 180) + (outputCount * 34) + 10;
-        const feeRate = 1; // satoshis per byte
-        const calculatedFee = (estimatedSize * feeRate) / 1e8;
+        const feeRate = 1;
+        const calculatedFee = (estimatedSize * feeRate) / 100000000;
         
         return Math.max(baseFee, calculatedFee);
     } catch (error) {
@@ -202,8 +215,8 @@ export function validateAddress(address) {
             return false;
         }
 
-        // Try to decode the base58 address
-        bitgo.address.fromBase58Check(address);
+        // Try to decode the address
+        bitcoin.address.fromBase58Check(address);
         return true;
     } catch (error) {
         console.error('Address validation error:', error);

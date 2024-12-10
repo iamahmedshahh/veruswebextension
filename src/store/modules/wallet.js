@@ -1,6 +1,7 @@
 import { WalletService } from '../../services/WalletService';
 import { verusRPC } from '../../services/VerusRPCService';
 import browser from 'webextension-polyfill';
+import storage from '../services/StorageService';
 
 // Initial state
 const state = {
@@ -18,7 +19,8 @@ const state = {
     selectedCurrencies: ['VRSCTEST'],
     isLocked: true,
     connectedSites: [],
-    privateKeyWIF: null // Add private key in WIF format to state
+    privateKeyWIF: null, // Add private key in WIF format to state
+    mnemonic: null // Store mnemonic phrase in state
 };
 
 // Getters
@@ -57,27 +59,23 @@ const actions = {
             // Generate new wallet
             const wallet = await WalletService.generateWallet(mnemonic, password);
             
-            // Save wallet data to storage
+            // Store wallet data and password hash
             await browser.storage.local.set({
-                wallet: {
-                    address: wallet.address,
-                    network: wallet.network,
-                    encryptedSeed: wallet.encryptedSeed,
-                    passwordHash: wallet.passwordHash,
-                    privateKeyWIF: wallet.privateKeyWIF // Use the explicit WIF format
-                },
+                wallet,
                 hasWallet: true,
-                isInitialized: true
+                isLoggedIn: true,
+                passwordHash: wallet.hashedPassword,
+                lastLoginTime: Date.now()
             });
-            
+
             // Update store state
-            commit('setWalletData', {
-                address: wallet.address,
-                network: wallet.network,
-                privateKeyWIF: wallet.privateKeyWIF // Use the explicit WIF format
-            });
+            commit('setWalletData', wallet);
             commit('setHasWallet', true);
             commit('setInitialized', true);
+            commit('setSeedConfirmed', true);
+            commit('setLoggedIn', true);
+            
+            await dispatch('currencies/initialize', null, { root: true });
             
             return wallet;
         } catch (error) {
@@ -100,27 +98,21 @@ const actions = {
             // Recover wallet from mnemonic
             const walletData = await WalletService.recoverFromMnemonic(mnemonic, password);
             
-            // Store wallet data securely
+            // Store wallet data and password hash
             await browser.storage.local.set({
-                wallet: {
-                    address: walletData.address,
-                    network: walletData.network,
-                    passwordHash: walletData.passwordHash,
-                    privateKeyWIF: walletData.privateKeyWIF // Store the WIF format
-                },
+                wallet: walletData,
                 hasWallet: true,
-                isInitialized: true
+                isLoggedIn: true,
+                passwordHash: walletData.hashedPassword,
+                lastLoginTime: Date.now()
             });
-            
+
             // Update store state
-            commit('setWalletData', {
-                address: walletData.address,
-                network: walletData.network,
-                privateKeyWIF: walletData.privateKeyWIF // Include WIF format in state
-            });
+            commit('setWalletData', walletData);
             commit('setInitialized', true);
             commit('setHasWallet', true);
             commit('setLoggedIn', true);
+            commit('setSeedConfirmed', true);
             
             // Get initial balance
             await dispatch('getBalance', walletData.address);
@@ -162,36 +154,27 @@ const actions = {
             commit('clearError');
             commit('setLoading', true);
             
-            // Get stored wallet data from local storage
-            const walletData = await browser.storage.local.get(['wallet', 'hasWallet']);
-            // Get login state from session storage
-            const sessionData = await browser.storage.session.get(['isLoggedIn']);
+            // Get stored wallet data
+            const data = await browser.storage.local.get(['wallet', 'hasWallet', 'isLoggedIn']);
             
-            if (!walletData.wallet) {
+            if (!data.wallet || !data.hasWallet) {
                 commit('setHasWallet', false);
                 return;
             }
-            
-            // Set wallet data
-            commit('setWalletData', {
-                address: walletData.wallet.address,
-                network: walletData.wallet.network,
-                privateKeyWIF: walletData.wallet.privateKeyWIF // Include private key in WIF format
-            });
-            
+
+            // Always set wallet data if it exists
+            commit('setWalletData', data.wallet);
             commit('setHasWallet', true);
-            commit('setInitialized', true);
             
-            // Restore login state from session
-            if (sessionData.isLoggedIn) {
+            // Set login state if logged in
+            if (data.isLoggedIn) {
                 commit('setLoggedIn', true);
-                // Update balances if logged in
-                await dispatch('updateBalances');
-            } else {
-                commit('setLoggedIn', false);
+                commit('setInitialized', true);
+                commit('setSeedConfirmed', true);
+                await dispatch('currencies/initialize', null, { root: true });
             }
             
-            return walletData.wallet;
+            return data.wallet;
         } catch (error) {
             console.error('Failed to load wallet:', error);
             commit('setError', error.message);
@@ -203,7 +186,7 @@ const actions = {
     
     async clearWallet({ commit }) {
         try {
-            await browser.storage.local.remove('wallet');
+            await storage.remove('wallet');
             commit('clearWalletData');
             commit('setSeedConfirmed', false);
             commit('setInitialized', false);
@@ -224,16 +207,18 @@ const actions = {
             // Verify password
             await dispatch('verifyPassword', password);
             
-            // Set login state in session storage instead of local storage
-            await browser.storage.session.set({ 
+            // Set login state
+            await browser.storage.local.set({ 
                 isLoggedIn: true,
                 lastLoginTime: Date.now()
             });
             
             // Update store state
             commit('setLoggedIn', true);
+            commit('setInitialized', true);
+            commit('setSeedConfirmed', true);
             
-            // Load wallet data after successful login
+            // Load wallet data and initialize currencies
             await dispatch('loadWallet');
             
         } catch (error) {
@@ -247,23 +232,19 @@ const actions = {
     
     async logout({ commit }) {
         try {
-            commit('clearError');
             commit('setLoading', true);
             
-            // Clear only login state from storage, preserve wallet data
-            await browser.storage.session.set({ 
+            // Only clear login state, keep wallet data
+            await browser.storage.local.set({ 
                 isLoggedIn: false,
                 lastLoginTime: null
             });
             
-            // Clear store login state
             commit('setLoggedIn', false);
-            commit('clearLoginData');
             
         } catch (error) {
             console.error('Logout error:', error);
             commit('setError', error.message);
-            throw error;
         } finally {
             commit('setLoading', false);
         }
@@ -280,7 +261,7 @@ const actions = {
             }
             
             // Verify password
-            const isValid = await WalletService.verifyPassword(password, data.wallet.passwordHash);
+            const isValid = await WalletService.verifyPassword(password, data.wallet.hashedPassword);
             if (!isValid) {
                 throw new Error('Invalid password');
             }
@@ -396,7 +377,8 @@ const actions = {
             commit('setWalletData', {
                 address: state.address,
                 network: state.network,
-                privateKeyWIF: data.wallet.privateKeyWIF
+                privateKeyWIF: data.wallet.privateKeyWIF,
+                mnemonic: data.wallet.mnemonic
             });
             
             return data.wallet.privateKeyWIF;
@@ -410,90 +392,92 @@ const actions = {
 
 // Mutations
 const mutations = {
-    setWalletData(state, { address, network, privateKeyWIF }) {
+    setWalletData(state, { address, network, privateKeyWIF, mnemonic }) {
         state.address = address;
         state.network = network;
-        state.privateKeyWIF = privateKeyWIF; // Store private key in state
+        state.privateKeyWIF = privateKeyWIF;
+        state.mnemonic = mnemonic;
     },
-    
+
     clearWalletData(state) {
         state.address = null;
         state.network = null;
-        state.balance = null;
-        state.isInitialized = false;
-        state.seedConfirmed = false;
+        state.privateKeyWIF = null;
+        state.mnemonic = null;
         state.hasWallet = false;
-        state.privateKeyWIF = null; // Clear private key
+        state.isInitialized = false;
+        state.isLoggedIn = false;
+        state.seedConfirmed = false;
     },
 
     clearLoginData(state) {
-        state.address = null;
-        state.network = null;
-        state.balance = null;
-        state.privateKeyWIF = null; // Clear private key
+        state.isLoggedIn = false;
+        state.isInitialized = false;
+        state.seedConfirmed = false;
+        // Do not clear wallet data here
     },
-    
+
     setError(state, error) {
         state.error = error;
     },
-    
+
     clearError(state) {
         state.error = null;
     },
-    
+
     setLoading(state, loading) {
         state.loading = loading;
     },
-    
+
     setBalance(state, balance) {
         state.balance = balance;
     },
-    
+
     setSeedConfirmed(state, confirmed) {
         state.seedConfirmed = confirmed;
     },
-    
+
     setInitialized(state, initialized) {
         state.isInitialized = initialized;
     },
-    
+
     setLoggedIn(state, isLoggedIn) {
         state.isLoggedIn = isLoggedIn;
     },
-    
+
     setHasWallet(state, hasWallet) {
         state.hasWallet = hasWallet;
     },
-    
+
     SET_LOADING_BALANCES(state, loading) {
         state.isLoadingBalances = loading;
     },
-    
+
     SET_BALANCES(state, balances) {
         state.balances = balances;
     },
-    
+
     ADD_CURRENCY(state, currency) {
         if (!state.selectedCurrencies.includes(currency)) {
             state.selectedCurrencies.push(currency);
         }
     },
-    
+
     REMOVE_CURRENCY(state, currency) {
         const index = state.selectedCurrencies.indexOf(currency);
         if (index !== -1) {
             state.selectedCurrencies.splice(index, 1);
         }
     },
-    
+
     SET_SELECTED_CURRENCIES(state, currencies) {
         state.selectedCurrencies = currencies;
     },
-    
+
     SET_CONNECTED_SITES(state, sites) {
         state.connectedSites = sites
     },
-    
+
     REMOVE_CONNECTED_SITE(state, origin) {
         state.connectedSites = state.connectedSites.filter(site => site.origin !== origin)
     },

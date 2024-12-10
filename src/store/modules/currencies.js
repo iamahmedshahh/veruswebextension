@@ -1,15 +1,17 @@
 import { verusRPC } from '../../services/VerusRPCService';
+import browser from 'webextension-polyfill';
 
 const MAX_CURRENCIES = 7;
+const DEFAULT_CURRENCY = 'VRSCTEST';
 
 export default {
     namespaced: true,
     
     state: {
         availableCurrencies: [],
-        selectedCurrencies: ['VRSCTEST'], // Default currency
+        selectedCurrencies: [DEFAULT_CURRENCY], // Default currency
         balances: {},
-        currencyDefinitions: {}, // Store currency definitions
+        currencyDefinitions: {},
         loading: false,
         error: null
     },
@@ -29,14 +31,18 @@ export default {
             });
             state.currencyDefinitions = definitions;
         },
+
         SET_SELECTED_CURRENCIES(state, currencies) {
+            // Ensure default currency is always included
+            if (!currencies.includes(DEFAULT_CURRENCY)) {
+                currencies = [DEFAULT_CURRENCY, ...currencies];
+            }
             state.selectedCurrencies = currencies;
         },
+
         SET_BALANCES(state, balances) {
-            // Update balances with proper currency names
             const updatedBalances = {};
             Object.entries(balances).forEach(([currency, balance]) => {
-                // Use the currency definition name if available
                 const def = state.currencyDefinitions[currency];
                 const currencyName = def ? (def.fullyqualifiedname || def.name) : currency;
                 updatedBalances[currencyName] = balance;
@@ -44,36 +50,24 @@ export default {
             state.balances = updatedBalances;
             console.log('Updated balances in store:', updatedBalances);
         },
-        UPDATE_BALANCE(state, { currency, balance }) {
-            const currencyName = state.currencyDefinitions[currency]?.fullyqualifiedname || currency;
-            state.balances = {
-                ...state.balances,
-                [currencyName]: balance
-            };
-        },
-        ADD_SELECTED_CURRENCY(state, currency) {
-            const currencyName = state.currencyDefinitions[currency]?.fullyqualifiedname || currency;
-            if (!state.selectedCurrencies.includes(currencyName)) {
-                state.selectedCurrencies.push(currencyName);
-            }
-        },
-        REMOVE_SELECTED_CURRENCY(state, currency) {
-            state.selectedCurrencies = state.selectedCurrencies.filter(
-                c => c !== currency
-            );
-            // Also remove the balance
-            const { [currency]: _, ...remainingBalances } = state.balances;
-            state.balances = remainingBalances;
-        },
+
         SET_LOADING(state, loading) {
             state.loading = loading;
         },
+
         SET_ERROR(state, error) {
             state.error = error;
         }
     },
 
     actions: {
+        async initialize({ dispatch }) {
+            await dispatch('fetchAvailableCurrencies');
+            await dispatch('loadPersistedState');
+            // Fetch balances after initialization
+            await dispatch('fetchBalances');
+        },
+
         async fetchAvailableCurrencies({ commit }) {
             commit('SET_LOADING', true);
             commit('SET_ERROR', null);
@@ -108,19 +102,13 @@ export default {
                 console.log('Fetched balances:', balances);
                 commit('SET_BALANCES', balances);
 
-                // Update selected currencies based on available balances
-                const currenciesWithBalance = Object.keys(balances).filter(currency => 
-                    balances[currency] > 0 && !state.selectedCurrencies.includes(currency)
-                );
-
-                if (currenciesWithBalance.length > 0) {
-                    const newSelected = [...state.selectedCurrencies];
-                    currenciesWithBalance.forEach(currency => {
-                        if (newSelected.length < MAX_CURRENCIES) {
-                            newSelected.push(currency);
-                        }
+                // Save selected currencies to browser storage
+                try {
+                    await browser.storage.local.set({
+                        selectedCurrencies: state.selectedCurrencies
                     });
-                    commit('SET_SELECTED_CURRENCIES', newSelected);
+                } catch (error) {
+                    console.warn('Failed to save selected currencies:', error);
                 }
             } catch (error) {
                 console.error('Failed to fetch balances:', error);
@@ -130,13 +118,67 @@ export default {
             }
         },
 
-        async selectCurrency({ commit, dispatch, rootState }, currency) {
-            commit('ADD_SELECTED_CURRENCY', currency);
+        async loadPersistedState({ commit }) {
+            try {
+                const data = await browser.storage.local.get(['selectedCurrencies']);
+                if (data.selectedCurrencies && Array.isArray(data.selectedCurrencies)) {
+                    // Ensure VRSCTEST is always included
+                    const currencies = data.selectedCurrencies.includes(DEFAULT_CURRENCY)
+                        ? data.selectedCurrencies
+                        : [DEFAULT_CURRENCY, ...data.selectedCurrencies];
+                    commit('SET_SELECTED_CURRENCIES', currencies);
+                } else {
+                    // If no currencies are stored, set default currency
+                    commit('SET_SELECTED_CURRENCIES', [DEFAULT_CURRENCY]);
+                }
+            } catch (error) {
+                console.warn('Failed to load persisted state:', error);
+                // Set default currency if loading fails
+                commit('SET_SELECTED_CURRENCIES', [DEFAULT_CURRENCY]);
+            }
+        },
+
+        async selectCurrency({ commit, dispatch, state }, currency) {
+            if (state.selectedCurrencies.length >= MAX_CURRENCIES) {
+                commit('SET_ERROR', `Cannot add more than ${MAX_CURRENCIES} currencies`);
+                return;
+            }
+
+            const newSelected = [...state.selectedCurrencies];
+            if (!newSelected.includes(currency)) {
+                newSelected.push(currency);
+                commit('SET_SELECTED_CURRENCIES', newSelected);
+                
+                try {
+                    await browser.storage.local.set({
+                        selectedCurrencies: newSelected
+                    });
+                } catch (error) {
+                    console.warn('Failed to save selected currencies:', error);
+                }
+            }
+            
             await dispatch('fetchBalances');
         },
 
-        unselectCurrency({ commit }, currency) {
-            commit('REMOVE_SELECTED_CURRENCY', currency);
+        async unselectCurrency({ commit, dispatch, state }, currency) {
+            // Don't allow unselecting VRSCTEST
+            if (currency === DEFAULT_CURRENCY) {
+                return;
+            }
+
+            const newSelected = state.selectedCurrencies.filter(c => c !== currency);
+            commit('SET_SELECTED_CURRENCIES', newSelected);
+            
+            try {
+                await browser.storage.local.set({
+                    selectedCurrencies: newSelected
+                });
+            } catch (error) {
+                console.warn('Failed to save selected currencies:', error);
+            }
+            
+            await dispatch('fetchBalances');
         }
     },
 

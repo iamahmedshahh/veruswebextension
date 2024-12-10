@@ -62,13 +62,66 @@
           </div>
         </div>
         <div class="modal-body">
-          <p>Thank you for considering a donation to support Verus development!</p>
-          <div class="donate-address">
-            <span class="label">VRSC:</span>
-            <div class="address-container">
-              <code>{{ donateAddress }}</code>
-              <div class="copy-icon" @click="copyDonateAddress" title="Copy Address">
-                <i class="fas fa-copy"></i>
+          <p>Thank you for supporting this project's development!</p>
+          
+          <div class="donate-tabs">
+            <div 
+              class="tab" 
+              :class="{ active: activeTab === 'btc' }"
+              @click="activeTab = 'btc'"
+            >
+              BTC Legacy
+            </div>
+            <div 
+              class="tab" 
+              :class="{ active: activeTab === 'segwit' }"
+              @click="activeTab = 'segwit'"
+            >
+              BTC SegWit
+            </div>
+            <div 
+              class="tab" 
+              :class="{ active: activeTab === 'vrsc' }"
+              @click="activeTab = 'vrsc'"
+            >
+              VRSC
+            </div>
+          </div>
+
+          <div class="tab-content">
+            <div v-if="activeTab === 'btc'" class="donate-section">
+              <img :src="btcQrCode" alt="BTC QR Code" class="qr-code" v-if="btcQrCode" />
+              <div class="donate-address">
+                <div class="address-container">
+                  <code>1H86CKo3877NrWKT2zwLgkLsj3PR2WJa21</code>
+                  <div class="copy-icon" @click="copyAddress('btc')" title="Copy Address">
+                    <i class="fas fa-copy"></i>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <div v-if="activeTab === 'segwit'" class="donate-section">
+              <img :src="segwitQrCode" alt="BTC SegWit QR Code" class="qr-code" v-if="segwitQrCode" />
+              <div class="donate-address">
+                <div class="address-container">
+                  <code>bc1qkrv595awwt4jgwp928vy6h47cj2s8fhsdgdrwy</code>
+                  <div class="copy-icon" @click="copyAddress('segwit')" title="Copy Address">
+                    <i class="fas fa-copy"></i>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <div v-if="activeTab === 'vrsc'" class="donate-section">
+              <img :src="vrscQrCode" alt="VRSC QR Code" class="qr-code" v-if="vrscQrCode" />
+              <div class="donate-address">
+                <div class="address-container">
+                  <code>{{ donateAddress }}</code>
+                  <div class="copy-icon" @click="copyAddress('vrsc')" title="Copy Address">
+                    <i class="fas fa-copy"></i>
+                  </div>
+                </div>
               </div>
             </div>
           </div>
@@ -82,6 +135,7 @@
 import { ref, onMounted, watch } from 'vue'
 import { useStore } from 'vuex'
 import browser from 'webextension-polyfill'
+import QRCode from 'qrcode'
 import VerusLogo from '../assets/verus-logo.svg'
 import ConnectedSites from './ConnectedSites.vue'
 
@@ -91,6 +145,12 @@ const networkName = ref('Verus Testnet')
 const showDonateModal = ref(false)
 const donateAddress = 'RRQHGqgKivuwvWgeWAvTnGg5VJr1aWNRx5'
 const connectedSitesRef = ref(null)
+const activeTab = ref('vrsc')
+
+// QR code data URLs
+const btcQrCode = ref('')
+const segwitQrCode = ref('')
+const vrscQrCode = ref('')
 
 const props = defineProps({
   isLocked: {
@@ -121,13 +181,54 @@ function showConnectedSites() {
   connectedSitesRef.value?.open()
 }
 
-async function copyDonateAddress() {
+async function copyAddress(type) {
+  const addresses = {
+    btc: '1H86CKo3877NrWKT2zwLgkLsj3PR2WJa21',
+    segwit: 'bc1qkrv595awwt4jgwp928vy6h47cj2s8fhsdgdrwy',
+    vrsc: donateAddress
+  }
+
   try {
-    await navigator.clipboard.writeText(donateAddress)
-    // You could add a toast notification here
-    console.log('Donate address copied!')
+    await navigator.clipboard.writeText(addresses[type])
+    console.log('Address copied!')
   } catch (error) {
     console.error('Failed to copy address:', error)
+  }
+}
+
+// Watch for tab changes to generate QR codes
+watch([activeTab, showDonateModal], async ([newTab, isVisible]) => {
+  if (isVisible) {
+    await generateQRCode(newTab)
+  }
+})
+
+async function generateQRCode(type) {
+  const addresses = {
+    btc: '1H86CKo3877NrWKT2zwLgkLsj3PR2WJa21',
+    segwit: 'bc1qkrv595awwt4jgwp928vy6h47cj2s8fhsdgdrwy',
+    vrsc: donateAddress
+  }
+
+  try {
+    const qrCodeUrl = await QRCode.toDataURL(addresses[type], {
+      width: 200,
+      margin: 1,
+      color: {
+        dark: '#000000',
+        light: '#ffffff'
+      }
+    })
+
+    if (type === 'btc') {
+      btcQrCode.value = qrCodeUrl
+    } else if (type === 'segwit') {
+      segwitQrCode.value = qrCodeUrl
+    } else if (type === 'vrsc') {
+      vrscQrCode.value = qrCodeUrl
+    }
+  } catch (error) {
+    console.error('Error generating QR code:', error)
   }
 }
 
@@ -279,6 +380,44 @@ onMounted(async () => {
 
 .modal-body {
   color: var(--text-color);
+}
+
+.donate-tabs {
+  display: flex;
+  gap: 1rem;
+  margin-bottom: 1rem;
+}
+
+.tab {
+  padding: 0.5rem 1rem;
+  border-radius: 4px 4px 0 0;
+  cursor: pointer;
+  transition: background-color 0.2s;
+}
+
+.tab.active {
+  background: var(--background-color);
+}
+
+.tab-content {
+  padding: 1rem;
+  border: 1px solid var(--border-color);
+  border-radius: 0 4px 4px 4px;
+}
+
+.donate-section {
+  margin-bottom: 1rem;
+}
+
+.qr-code {
+  width: 200px;
+  height: 200px;
+  margin: 1rem auto;
+  display: block;
+  background: white;
+  padding: 1rem;
+  border-radius: 8px;
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
 }
 
 .donate-address {

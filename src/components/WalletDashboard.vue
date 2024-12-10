@@ -142,7 +142,18 @@
                     <button class="close-button" @click="showReceiveModal = false">&times;</button>
                 </div>
                 <div class="modal-body">
-                    <p>Your receive address is: {{ address }}</p>
+                    <div class="qr-container">
+                        <img :src="receiveQrCode" alt="Receive Address QR Code" class="qr-code" v-if="receiveQrCode" />
+                    </div>
+                    <div class="address-container">
+                        <p class="address-label">Your receive address:</p>
+                        <div class="address-value">
+                            {{ address }}
+                            <button class="copy-button" @click="copyToClipboard(address)" title="Copy address">
+                                <i class="fas fa-copy"></i>
+                            </button>
+                        </div>
+                    </div>
                 </div>
             </div>
         </div>
@@ -150,8 +161,9 @@
 </template>
 
 <script>
-import { ref, computed, onMounted } from 'vue';
+import { ref, computed, onMounted, watch, nextTick } from 'vue';
 import { useStore } from 'vuex';
+import QRCode from 'qrcode';
 import WalletHeader from './WalletHeader.vue';
 import LoadingBar from './LoadingBar.vue';
 import Settings from './Settings.vue';
@@ -180,6 +192,7 @@ export default {
         const error = ref('');
         const isLoading = ref(false);
         const estimatedFee = ref(0);
+        const receiveQrCode = ref('');
 
         const walletLoading = computed(() => store.state.wallet.loading);
         const walletError = computed(() => store.state.wallet.error);
@@ -198,9 +211,14 @@ export default {
             return balance.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 8 });
         };
 
-        const copyToClipboard = (text) => {
-            navigator.clipboard.writeText(text);
-            // Could add a toast notification here
+        const copyToClipboard = async (text) => {
+            try {
+                await navigator.clipboard.writeText(text);
+                // Could add a toast notification here
+                console.log('Address copied to clipboard');
+            } catch (err) {
+                console.error('Failed to copy address:', err);
+            }
         };
 
         const handleCurrencySelected = (currency) => {
@@ -306,6 +324,23 @@ export default {
             }
         };
 
+        watch(showReceiveModal, async (isVisible) => {
+            if (isVisible && address.value) {
+                try {
+                    receiveQrCode.value = await QRCode.toDataURL(address.value, {
+                        width: 200,
+                        margin: 1,
+                        color: {
+                            dark: '#000000',
+                            light: '#ffffff'
+                        }
+                    });
+                } catch (error) {
+                    console.error('Error generating QR code:', error);
+                }
+            }
+        });
+
         onMounted(async () => {
             try {
                 await store.dispatch('wallet/loadWalletData');
@@ -340,7 +375,8 @@ export default {
             handleSend,
             handleReceive,
             executeSend,
-            updateEstimatedFee
+            updateEstimatedFee,
+            receiveQrCode
         };
     }
 };
@@ -629,5 +665,55 @@ export default {
 .send-button:disabled {
     opacity: 0.6;
     cursor: not-allowed;
+}
+
+.qr-container {
+    display: flex;
+    justify-content: center;
+    margin-bottom: 1.5rem;
+}
+
+.qr-code {
+    width: 200px;
+    height: 200px;
+    background: white;
+    padding: 1rem;
+    border-radius: 8px;
+    box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+}
+
+.address-container {
+    text-align: center;
+}
+
+.address-label {
+    font-size: 0.9rem;
+    color: #666;
+    margin-bottom: 0.5rem;
+}
+
+.address-value {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0.5rem;
+    font-family: monospace;
+    background-color: #f5f5f5;
+    padding: 0.75rem;
+    border-radius: 4px;
+    word-break: break-all;
+}
+
+.copy-button {
+    background: none;
+    border: none;
+    padding: 4px 8px;
+    cursor: pointer;
+    color: #666;
+    transition: color 0.2s;
+}
+
+.copy-button:hover {
+    color: var(--primary-color);
 }
 </style>

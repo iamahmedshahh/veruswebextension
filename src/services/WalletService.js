@@ -5,22 +5,13 @@ import HDKey from 'hdkey';
 import BigInteger from 'bigi';
 import bcrypt from 'bcryptjs';
 
-// Get the BitGo library instance and ECPair
+// Get the BitGo library instance
 const lib = bitgo.default;
-const ECPair = lib.ECPair;
+const networks = lib.networks;
+const address = lib.address;
 
 // Network configuration for Verus
-const NETWORK = {
-    messagePrefix: '\x18Verus Signed Message:\n',
-    bip32: {
-        public: 0x0488B21E,   // Verus BIP32 pubkey version
-        private: 0x0488ADE4   // Verus BIP32 private key version
-    },
-    pubKeyHash: 0x3C,     // Verus public key hash (address starts with R)
-    scriptHash: 0x55,     // Verus script hash
-    wif: 0xBC,           // Verus WIF format private key
-    coin: 'VRSCTEST'
-};
+const NETWORK = networks.verustest;
 
 // BIP44 path for Verus (using Bitcoin's coin type for now)
 const BIP44_PATH = "m/44'/0'/0'/0/0";
@@ -34,55 +25,42 @@ export class WalletService {
      */
     static async generateWallet(mnemonic, password) {
         try {
-            // Generate mnemonic (24 words for extra security) if not provided
-            mnemonic = mnemonic || bip39.generateMnemonic(256);
-            
-            // Validate mnemonic
-            if (!bip39.validateMnemonic(mnemonic)) {
-                throw new Error('Invalid mnemonic phrase');
+            // Generate mnemonic if not provided
+            if (!mnemonic) {
+                const entropy = crypto.randomBytes(16);
+                mnemonic = bip39.entropyToMnemonic(entropy);
             }
-            
-            // Convert mnemonic to seed
+
+            // Generate seed from mnemonic
             const seed = await bip39.mnemonicToSeed(mnemonic);
-            
+
             // Create HD wallet
             const hdkey = HDKey.fromMasterSeed(seed);
             const childKey = hdkey.derive(BIP44_PATH);
             
-            // Get private key from derived path
-            const privateKeyBuffer = childKey.privateKey;
-            
-            // Create key pair using ECPair
-            const keyPair = ECPair.fromPrivateKey(privateKeyBuffer, { network: NETWORK });
+            // Create key pair from private key
+            const keyPair = lib.ECPair.makeRandom({ network: NETWORK });
+            keyPair.d = BigInteger.fromBuffer(childKey.privateKey);
             
             // Get WIF (Wallet Import Format)
             const privateKeyWIF = keyPair.toWIF();
-            
-            // Generate P2PKH address
-            const { address } = lib.payments.p2pkh({
-                pubkey: keyPair.publicKey,
-                network: NETWORK
-            });
 
-            // Verify address format
-            if (!address.startsWith('R') || address.length !== 34) {
-                throw new Error('Generated address format is invalid');
-            }
-            
-            // Hash the password
-            const passwordHash = await this.hashPassword(password);
-            
+            // Get address using P2PKH script
+            const pubKeyHash = lib.crypto.hash160(keyPair.getPublicKeyBuffer());
+            const verusAddress = address.toBase58Check(pubKeyHash, NETWORK.pubKeyHash);
+
+            // Hash password
+            const hashedPassword = await this.hashPassword(password);
+
             return {
                 mnemonic,
-                privateKey: privateKeyWIF,
-                privateKeyWIF, // Add explicit WIF format
-                address,
-                network: NETWORK.coin,
-                passwordHash
+                privateKeyWIF,
+                address: verusAddress,
+                hashedPassword
             };
         } catch (error) {
-            console.error('Failed to generate wallet:', error);
-            throw new Error('Wallet generation failed: ' + error.message);
+            console.error('Error generating wallet:', error);
+            throw error;
         }
     }
 
@@ -99,41 +77,35 @@ export class WalletService {
                 throw new Error('Invalid mnemonic phrase');
             }
 
-            // Convert mnemonic to seed
+            // Generate seed from mnemonic
             const seed = await bip39.mnemonicToSeed(mnemonic);
-            
+
             // Create HD wallet
             const hdkey = HDKey.fromMasterSeed(seed);
             const childKey = hdkey.derive(BIP44_PATH);
             
-            // Get private key from derived path
-            const privateKeyBuffer = childKey.privateKey;
-            
-            // Create key pair using ECPair
-            const keyPair = ECPair.fromPrivateKey(privateKeyBuffer, { network: NETWORK });
+            // Create key pair from private key
+            const keyPair = lib.ECPair.makeRandom({ network: NETWORK });
+            keyPair.d = BigInteger.fromBuffer(childKey.privateKey);
             
             // Get WIF
             const privateKeyWIF = keyPair.toWIF();
-            
-            // Generate address
-            const { address } = lib.payments.p2pkh({
-                pubkey: keyPair.publicKey,
-                network: NETWORK
-            });
 
-            // Hash the password
-            const passwordHash = await this.hashPassword(password);
+            // Get address using P2PKH script
+            const pubKeyHash = lib.crypto.hash160(keyPair.getPublicKeyBuffer());
+            const verusAddress = address.toBase58Check(pubKeyHash, NETWORK.pubKeyHash);
+
+            // Hash password
+            const hashedPassword = await this.hashPassword(password);
 
             return {
-                privateKey: privateKeyWIF,
-                privateKeyWIF, // Add explicit WIF format
-                address,
-                network: NETWORK.coin,
-                passwordHash
+                privateKeyWIF,
+                address: verusAddress,
+                hashedPassword
             };
         } catch (error) {
-            console.error('Failed to recover wallet:', error);
-            throw new Error('Wallet recovery failed: ' + error.message);
+            console.error('Error recovering wallet:', error);
+            throw error;
         }
     }
 
@@ -145,16 +117,15 @@ export class WalletService {
     static async recoverFromWIF(wif) {
         try {
             // Create key pair from WIF
-            const keyPair = ECPair.fromWIF(wif, NETWORK);
+            const keyPair = lib.ECPair.makeRandom({ network: NETWORK });
+            keyPair.d = BigInteger.fromBuffer(Buffer.from(wif, 'base64'));
             
-            // Generate address
-            const { address } = lib.payments.p2pkh({
-                pubkey: keyPair.publicKey,
-                network: NETWORK
-            });
+            // Get address using P2PKH script
+            const pubKeyHash = lib.crypto.hash160(keyPair.getPublicKeyBuffer());
+            const verusAddress = address.toBase58Check(pubKeyHash, NETWORK.pubKeyHash);
 
             return {
-                address,
+                address: verusAddress,
                 network: NETWORK.coin
             };
         } catch (error) {
