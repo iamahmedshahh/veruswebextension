@@ -17,7 +17,7 @@ const state = {
     isLoadingBalances: false,
     balances: {},
     selectedCurrencies: ['VRSCTEST'],
-    isLocked: true,
+    isLocked: false,
     connectedSites: [],
     privateKeyWIF: null, // Add private key in WIF format to state
     mnemonic: null // Store mnemonic phrase in state
@@ -34,7 +34,8 @@ const getters = {
     currentBalance: state => state.balance,
     isSeedConfirmed: state => state.seedConfirmed,
     isLoggedIn: state => state.isLoggedIn,
-    hasWallet: state => state.hasWallet
+    hasWallet: state => state.hasWallet,
+    isLocked: state => state.isLocked
 };
 
 // Actions
@@ -232,25 +233,104 @@ const actions = {
     
     async logout({ commit }) {
         try {
-            commit('setLoading', true);
+            console.log('Logging out...');
+            // Clear sensitive wallet data from storage, but keep hasWallet flag
+            await browser.storage.local.remove([
+                'isLoggedIn',
+                'passwordHash',
+                'walletState',
+                'lastLoginTime'
+            ]);
+            console.log('Local storage cleared');
             
-            // Only clear login state, keep wallet data
-            await browser.storage.local.set({ 
-                isLoggedIn: false,
-                lastLoginTime: null
-            });
+            // Clear session storage
+            await browser.storage.session.clear();
+            console.log('Session storage cleared');
             
+            // Clear store state but keep hasWallet true
+            commit('clearLoginData');
             commit('setLoggedIn', false);
+            commit('setLocked', true);
+            console.log('Store state cleared');
             
+            // Force reload to reset app state
+            console.log('Reloading page...');
+            window.location.reload();
         } catch (error) {
-            console.error('Logout error:', error);
+            console.error('Failed to logout:', error);
             commit('setError', error.message);
-        } finally {
-            commit('setLoading', false);
+            throw error;
         }
     },
     
-    async verifyPassword({ commit }, password) {
+    async lock({ commit, dispatch }) {
+        try {
+            console.log('Locking wallet...');
+            // Update wallet state in storage
+            await browser.storage.local.set({ 
+                walletState: {
+                    isLocked: true
+                }
+            });
+            console.log('Wallet state updated');
+            
+            // Clear session state
+            await browser.storage.session.clear();
+            console.log('Session cleared');
+            
+            // Update store state
+            commit('setLoggedIn', false);
+            commit('setLocked', true);
+            commit('clearLoginData');
+            console.log('Store state updated');
+            
+            // Reload page to reset app state
+            window.location.reload();
+        } catch (error) {
+            console.error('Failed to lock wallet:', error);
+            commit('setError', error.message);
+            throw error;
+        }
+    },
+    
+    async unlock({ commit, dispatch, rootGetters }, password) {
+        try {
+            // Get the stored wallet data
+            const { wallet } = await browser.storage.local.get('wallet');
+            if (!wallet) {
+                throw new Error('No wallet found');
+            }
+            
+            // Verify password
+            const isValid = await dispatch('verifyPassword', password, { root: true });
+            if (!isValid) {
+                throw new Error('Invalid password');
+            }
+            
+            // Update wallet state
+            await browser.storage.local.set({ 
+                walletState: {
+                    isLocked: false,
+                    address: wallet.address
+                }
+            });
+            
+            // Update session state
+            await browser.storage.session.set({ isLoggedIn: true });
+            
+            // Update store state
+            commit('setLoggedIn', true);
+            commit('setLocked', false);
+            
+            return true;
+        } catch (error) {
+            console.error('Failed to unlock wallet:', error);
+            commit('setError', error.message);
+            throw error;
+        }
+    },
+    
+    async verifyPassword({ commit, dispatch, rootGetters }, password) {
         try {
             commit('clearError');
             
@@ -400,6 +480,7 @@ const mutations = {
     },
 
     clearWalletData(state) {
+        console.log('Clearing wallet data from store...');
         state.address = null;
         state.network = null;
         state.privateKeyWIF = null;
@@ -408,13 +489,33 @@ const mutations = {
         state.isInitialized = false;
         state.isLoggedIn = false;
         state.seedConfirmed = false;
+        state.isLocked = true;
+        state.balance = null;
+        state.balances = {};
+        state.error = null;
+        state.loading = false;
+        state.isLoadingBalances = false;
+        state.connectedSites = [];
+        console.log('Store state after clear:', state);
     },
 
     clearLoginData(state) {
-        state.isLoggedIn = false;
+        console.log('Clearing login data...');
+        state.address = null;
+        state.network = null;
+        state.privateKeyWIF = null;
+        state.mnemonic = null;
         state.isInitialized = false;
+        state.isLoggedIn = false;
         state.seedConfirmed = false;
-        // Do not clear wallet data here
+        state.balance = null;
+        state.balances = {};
+        state.error = null;
+        state.loading = false;
+        state.isLoadingBalances = false;
+        state.connectedSites = [];
+        // Keep hasWallet true
+        console.log('Login data cleared');
     },
 
     setError(state, error) {
@@ -480,6 +581,11 @@ const mutations = {
 
     REMOVE_CONNECTED_SITE(state, origin) {
         state.connectedSites = state.connectedSites.filter(site => site.origin !== origin)
+    },
+    
+    setLocked(state, isLocked) {
+        console.log('Setting locked state to:', isLocked);
+        state.isLocked = isLocked;
     },
 };
 

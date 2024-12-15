@@ -169,11 +169,20 @@ async function checkConnection() {
   }
 }
 
-function toggleLock() {
-  if (props.isLocked) {
-    store.dispatch('wallet/unlock')
-  } else {
-    store.dispatch('wallet/lock')
+async function toggleLock() {
+  try {
+    console.log('Toggle lock called, current state:', props.isLocked);
+    if (!props.isLocked) {
+      // If unlocked, lock the wallet
+      console.log('Locking wallet...');
+      await store.dispatch('wallet/lock');
+      console.log('Wallet locked');
+    } else {
+      // If locked, redirect to login page
+      window.location.hash = '/';
+    }
+  } catch (error) {
+    console.error('Error in toggleLock:', error);
   }
 }
 

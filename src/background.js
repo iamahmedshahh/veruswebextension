@@ -21,6 +21,32 @@ let walletState = {
   network: 'testnet'
 };
 
+// Handle browser close/unload
+browser.runtime.onSuspend.addListener(async () => {
+  console.log('Extension is being suspended, clearing sensitive data...');
+  try {
+    // Clear session storage
+    await browser.storage.session.clear();
+    
+    // Clear sensitive data from local storage
+    const hasWallet = await browser.storage.local.get('hasWallet');
+    await browser.storage.local.clear();
+    if (hasWallet) {
+      await browser.storage.local.set({ hasWallet: true });
+    }
+    
+    // Reset extension state
+    extensionState.isLoggedIn = false;
+    extensionState.connectedSites.clear();
+    walletState.isLocked = true;
+    walletState.address = null;
+    
+    console.log('Successfully cleared data on suspend');
+  } catch (error) {
+    console.error('Error clearing data on suspend:', error);
+  }
+});
+
 // Initialize connection and state
 async function initializeState() {
   try {

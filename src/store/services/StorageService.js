@@ -1,25 +1,21 @@
+import browser from 'webextension-polyfill';
+
 /**
  * Storage service that provides a unified interface for both extension storage and localStorage
  */
 
-let browserAPI;
-try {
-    browserAPI = require('webextension-polyfill');
-} catch (error) {
-    console.warn('webextension-polyfill not available, falling back to localStorage');
-}
-
 const storage = {
     async get(keys) {
         try {
-            if (browserAPI) {
+            if (typeof browser !== 'undefined' && browser.storage) {
                 if (Array.isArray(keys)) {
-                    return await browserAPI.storage.local.get(keys);
+                    return await browser.storage.local.get(keys);
                 } else {
-                    const result = await browserAPI.storage.local.get(keys);
+                    const result = await browser.storage.local.get(keys);
                     return result[keys] ? { [keys]: result[keys] } : {};
                 }
             } else {
+                console.warn('Browser storage not available, using localStorage');
                 const result = {};
                 const keyArray = Array.isArray(keys) ? keys : [keys];
                 keyArray.forEach(key => {
@@ -51,11 +47,11 @@ const storage = {
             return result;
         }
     },
-    
+
     async set(data) {
         try {
-            if (browserAPI) {
-                await browserAPI.storage.local.set(data);
+            if (typeof browser !== 'undefined' && browser.storage) {
+                await browser.storage.local.set(data);
             } else {
                 Object.entries(data).forEach(([key, value]) => {
                     localStorage.setItem(key, JSON.stringify(value));
@@ -71,8 +67,8 @@ const storage = {
 
     async remove(keys) {
         try {
-            if (browserAPI) {
-                await browserAPI.storage.local.remove(keys);
+            if (typeof browser !== 'undefined' && browser.storage) {
+                await browser.storage.local.remove(keys);
             } else {
                 const keyArray = Array.isArray(keys) ? keys : [keys];
                 keyArray.forEach(key => localStorage.removeItem(key));
@@ -86,8 +82,8 @@ const storage = {
 
     async clear() {
         try {
-            if (browserAPI) {
-                await browserAPI.storage.local.clear();
+            if (typeof browser !== 'undefined' && browser.storage) {
+                await browser.storage.local.clear();
             } else {
                 localStorage.clear();
             }
