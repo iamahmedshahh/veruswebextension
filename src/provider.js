@@ -1,170 +1,222 @@
 // Verus Web Wallet Provider Implementation
-export class VerusProvider {
-  constructor() {
-    this.isVerusWallet = true;
-    this.version = '1.0.0';
-    this._isConnected = false;
-    this._address = null;
-    this._listeners = new Map();
-    this._reconnectAttempts = 0;
-    this._maxReconnectAttempts = 3;
-    this._reconnectDelay = 1000; // 1 second
-    this._connecting = null;
-
-    // Bind methods
-    this.connect = this.connect.bind(this);
-    this.disconnect = this.disconnect.bind(this);
-    this.getAccounts = this.getAccounts.bind(this);
-    this.requestAccounts = this.requestAccounts.bind(this);
-    this.isConnected = this.isConnected.bind(this);
-    this.on = this.on.bind(this);
-    this.off = this.off.bind(this);
-
-    // Initialize connection state
-    this._checkConnection();
-  }
-
-  async _checkConnection() {
-    try {
-      const accounts = await this.getAccounts();
-      this._isConnected = accounts && accounts.length > 0;
-      this._address = accounts?.[0] || null;
-    } catch (error) {
-      this._isConnected = false;
+(() => {
+  class VerusProvider {
+    constructor() {
+      this._connected = false;
+      this._connecting = false;
       this._address = null;
-      console.error('[Verus] Connection check failed:', error);
-    }
-  }
-
-  async connect() {
-    console.log('connect called');
-    
-    // Return existing connection if already connected
-    if (this._isConnected && this._address) {
-      return Promise.resolve({ address: this._address });
-    }
-    
-    // Return existing connection attempt if in progress
-    if (this._connecting) {
-      return this._connecting;
-    }
-
-    try {
-      this._connecting = new Promise((resolve, reject) => {
-        const timeoutId = setTimeout(() => {
-          cleanup();
-          reject(new Error('Connection request timed out'));
-        }, 300000); // 5 minutes timeout
-
-        const handler = (event) => {
-          if (event.source !== window) return;
-          if (event.data.type === 'VERUS_CONNECT_REQUEST_RESPONSE') {
-            cleanup();
-            if (event.data.error) {
-              reject(new Error(event.data.error));
-            } else {
-              this._isConnected = true;
-              this._address = event.data.result.address;
-              this._emitEvent('accountsChanged', [event.data.result.address]);
-              this._emitEvent('connect', { address: event.data.result.address });
-              resolve(event.data.result);
-            }
+      this._eventListeners = new Map();
+      this._pendingRequests = new Map();
+      this._connectPromise = null;
+      
+      // Provider properties
+      this.isVerusWalletInstalled = true;
+      this.isVerusWallet = true;
+      
+      // Check if already connected
+      this._checkConnectionState();
+      
+      // Listen for responses from content script
+      window.addEventListener('message', (event) => {
+        if (event.source !== window) return;
+        if (!event.data.type || !event.data.type.endsWith('_RESPONSE')) return;
+        
+        console.log('[Verus Provider] Received response:', event.data);
+        
+        const requestType = event.data.type.replace('_RESPONSE', '');
+        const response = event.data.payload || {};
+        
+        // Handle state changes first
+        this._handleResponse(requestType, response);
+        
+        // Then handle pending requests
+        const pendingRequest = this._pendingRequests.get(requestType);
+        if (pendingRequest) {
+          this._pendingRequests.delete(requestType);
+          if (response.error) {
+            pendingRequest.reject(new Error(response.error));
+          } else if (response.result) {
+            pendingRequest.resolve(response.result);
+          } else if (response.status === 'WAITING') {
+            // Don't resolve/reject for waiting status
+            console.log('[Verus Provider] Waiting for approval:', response.message);
           }
-        };
-
-        const cleanup = () => {
-          clearTimeout(timeoutId);
-          window.removeEventListener('message', handler);
-        };
-
-        window.addEventListener('message', handler);
-        window.postMessage({ type: 'VERUS_CONNECT_REQUEST' }, '*');
+        }
       });
+    }
 
-      const result = await this._connecting;
-      return result;
-    } catch (error) {
-      // Handle extension context invalidation
-      if (error.message.includes('Extension context invalidated')) {
-        if (this._reconnectAttempts < this._maxReconnectAttempts) {
-          this._reconnectAttempts++;
-          await new Promise(resolve => setTimeout(resolve, this._reconnectDelay));
-          return this.connect();
+    _handleResponse(requestType, response) {
+      console.log('[Verus Provider] Handling response:', requestType, response);
+      
+      if (requestType === 'VERUS_CONNECT_REQUEST') {
+        if (response.error) {
+          this._connecting = false;
+          this._connected = false;
+          this._address = null;
+          this._emit('error', new Error(response.error));
+          
+          // Reject the connect promise if it exists
+          if (this._connectPromise) {
+            this._connectPromise.reject(new Error(response.error));
+            this._connectPromise = null;
+          }
+        } else if (response.status === 'WAITING') {
+          // Keep connecting state for waiting status
+          this._connecting = true;
+          this._emit('waiting', { message: response.message });
+        } else if (response.connected && response.address) {
+          this._connected = true;
+          this._connecting = false;
+          this._address = response.address;
+          
+          console.log('[Verus Provider] Connected with address:', this._address);
+          
+          // Emit events
+          this._emit('connect', { address: this._address });
+          this._emit('accountsChanged', [this._address]);
+          
+          // Resolve the connect promise if it exists
+          if (this._connectPromise) {
+            this._connectPromise.resolve({ address: this._address });
+            this._connectPromise = null;
+          }
+        }
+      } else if (requestType === 'VERUS_CHECK_CONNECTION') {
+        if (response.error) {
+          console.error('[Verus Provider] Error checking connection state:', response.error);
+        } else if (response.connected && response.address) {
+          this._connected = true;
+          this._address = response.address;
+          console.log('[Verus Provider] Already connected:', this._address);
+          this._emit('connect', { address: this._address });
+          this._emit('accountsChanged', [this._address]);
         }
       }
-
-      this._isConnected = false;
-      this._address = null;
-      this._emitEvent('disconnect');
-      throw error;
-    } finally {
-      this._connecting = null;
-    }
-  }
-
-  async requestAccounts() {
-    console.log('requestAccounts called');
-    const result = await this.connect();
-    if (result.error) {
-      throw new Error(result.error);
-    }
-    return [result.address];
-  }
-
-  async disconnect() {
-    console.log('disconnect called');
-    if (!this._isConnected) {
-      return Promise.resolve();
     }
 
-    this._isConnected = false;
-    this._address = null;
-    this._emitEvent('accountsChanged', []);
-    this._emitEvent('disconnect');
-  }
-
-  async getAccounts() {
-    console.log('getAccounts called');
-    if (!this._isConnected) {
-      return Promise.resolve([]);
+    async _checkConnectionState() {
+      try {
+        // Request current connection state
+        window.postMessage({
+          type: 'VERUS_CHECK_CONNECTION'
+        }, '*');
+      } catch (error) {
+        console.error('[Verus Provider] Error checking connection state:', error);
+      }
     }
-    return Promise.resolve(this._address ? [this._address] : []);
-  }
 
-  isConnected() {
-    return this._isConnected;
-  }
-
-  on(eventName, callback) {
-    if (!this._listeners.has(eventName)) {
-      this._listeners.set(eventName, new Set());
-    }
-    this._listeners.get(eventName).add(callback);
-  }
-
-  off(eventName, callback) {
-    if (this._listeners.has(eventName)) {
-      this._listeners.get(eventName).delete(callback);
-    }
-  }
-
-  _emitEvent(eventName, data) {
-    if (this._listeners.has(eventName)) {
-      for (const callback of this._listeners.get(eventName)) {
+    _emit(eventName, data) {
+      console.log('[Verus Provider] Emitting event:', eventName, data);
+      const listeners = this._eventListeners.get(eventName) || [];
+      listeners.forEach(listener => {
         try {
-          callback(data);
+          listener(data);
         } catch (error) {
-          console.error(`[Verus] Error in ${eventName} event handler:`, error);
+          console.error(`Error in ${eventName} listener:`, error);
         }
+      });
+    }
+
+    on(eventName, listener) {
+      if (!this._eventListeners.has(eventName)) {
+        this._eventListeners.set(eventName, []);
+      }
+      this._eventListeners.get(eventName).push(listener);
+    }
+
+    off(eventName, listener) {
+      if (!this._eventListeners.has(eventName)) return;
+      const listeners = this._eventListeners.get(eventName);
+      const index = listeners.indexOf(listener);
+      if (index > -1) {
+        listeners.splice(index, 1);
       }
     }
+
+    isConnected() {
+      return this._connected;
+    }
+
+    async getAccounts() {
+      console.log('[Verus Provider] Getting accounts, connected:', this._connected);
+      if (!this._connected) return [];
+      if (this._address) return [this._address];
+      
+      try {
+        return await new Promise((resolve, reject) => {
+          this._pendingRequests.set('VERUS_GET_ACCOUNTS', { resolve, reject });
+          window.postMessage({
+            type: 'VERUS_GET_ACCOUNTS'
+          }, '*');
+        });
+      } catch (error) {
+        console.error('[Verus Provider] Error getting accounts:', error);
+        return [];
+      }
+    }
+
+    async connect() {
+      console.log('[Verus Provider] Connect called');
+      if (this._connected) {
+        console.log('[Verus Provider] Already connected:', { address: this._address });
+        return { address: this._address };
+      }
+      
+      if (this._connecting) {
+        console.log('[Verus Provider] Already connecting, waiting for existing promise...');
+        if (this._connectPromise) {
+          return new Promise((resolve, reject) => {
+            this._connectPromise = { resolve, reject };
+          });
+        }
+      }
+
+      this._connecting = true;
+      console.log('[Verus Provider] Initiating new connection...');
+      
+      try {
+        return await new Promise((resolve, reject) => {
+          this._connectPromise = { resolve, reject };
+          this._pendingRequests.set('VERUS_CONNECT_REQUEST', { resolve, reject });
+          
+          window.postMessage({
+            type: 'VERUS_CONNECT_REQUEST'
+          }, '*');
+        });
+      } catch (error) {
+        if (!error.message.includes('Awaiting connection approval')) {
+          this._connecting = false;
+          this._connected = false;
+          this._address = null;
+          this._connectPromise = null;
+        }
+        throw error;
+      }
+    }
+
+    async getBalance(currency = 'VRSCTEST') {
+      if (!this._connected) {
+        throw new Error('Not connected');
+      }
+
+      return new Promise((resolve, reject) => {
+        this._pendingRequests.set('VERUS_GET_BALANCE_REQUEST', { resolve, reject });
+        window.postMessage({
+          type: 'VERUS_GET_BALANCE_REQUEST',
+          currency
+        }, '*');
+      });
+    }
   }
-}
 
-// Export the provider creation function
-export function createVerusProvider() {
-  return new VerusProvider();
-}
+  // Create and expose the provider
+  const provider = new VerusProvider();
+  window.verus = provider;
+  window.verusWallet = provider;
 
-// Create and expose the provider instance
-window.verus = createVerusProvider();
+  console.log('[Verus] Provider initialized:', {
+    verus: !!window.verus,
+    verusWallet: !!window.verusWallet,
+    isVerusWalletInstalled: window.verus.isVerusWalletInstalled
+  });
+})();

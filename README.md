@@ -1,9 +1,9 @@
 # Verus Web Wallet Extension
 
 ### 🚀 Support Development
-This project is under active development. Help us reach our goal of 1.5k VRSC!
+This project is under active development. Help us reach our goal of 2k VRSC!
 
-**Donate VRSC:** `RRQHGqgKivuwvWgeWAvTnGg5VJr1aWNRx5`
+**VRSC:** `RRQHGqgKivuwvWgeWAvTnGg5VJr1aWNRx5`
 
 ![Donation QR Code](https://api.qrserver.com/v1/create-qr-code/?size=150x150&data=RRQHGqgKivuwvWgeWAvTnGg5VJr1aWNRx5)
 
@@ -21,21 +21,20 @@ A browser extension wallet for Verus cryptocurrency that enables secure transact
 - ✅ Secure key storage
 
 
-### Next Milestones
+### Next Milestone
 - 🔄 MetaMask-style transaction signing UI.
-- 🔄 Get balances on dApps and perform sends/converts etc.
+- 🔄 Get balances on dApps and perform sends/converts signing etc.
 - 🔄 Transaction history.
-- 🔄 Get balances on dApps etc.
 - 🔄 Support for main net with enhanced testing.
-- 🔄 Hardware wallet support
+- 🔄 Multi wallet feature.
 
 ### Future Roadmap
 - 📍 VerusID support
-- 📍 Multi chain support
 - 📍 NFT support
 - 📍 Create a library specifically for this Extension
+- 📍 Integrate Defi LLAMA?
 
-Your donations help accelerate development and bring these features to life! 🚀
+Your suport can help accelerate development and bring these features to life! 🚀
 
 
 ## Installation
@@ -57,13 +56,16 @@ yarn build or npm run build
 ```
 
 4. Load the extension in your browser:
-   - Open Chrome/Brave and go to `chrome://extensions/`
+   - Open Chrome and go to `chrome://extensions/`
    - Enable "Developer mode"
    - Click "Load unpacked" and select the `dist` folder
 
 ## Integrating with Your Web Application
 
 To integrate the Verus Web Wallet with your web application, you can use the following code snippet:
+
+
+## SEE the HOOKS Folder for a sample JS file 
 
 ```javascript
 // Check if Verus Wallet extension is installed
@@ -93,50 +95,6 @@ async function connectWallet() {
   }
 }
 
-// Send a transaction
-async function sendTransaction(toAddress, amount, currency = 'VRSCTEST') {
-  try {
-    const txParams = {
-      to: toAddress,
-      amount: amount,
-      currency: currency
-    };
-    
-    const txHash = await window.verusWallet.sendCurrency(txParams);
-    return txHash;
-  } catch (error) {
-    console.error('Transaction failed:', error);
-    throw error;
-  }
-}
-```
-
-### Example Usage
-
-```javascript
-// Connect to wallet
-document.getElementById('connectButton').addEventListener('click', async () => {
-  try {
-    const address = await connectWallet();
-    console.log('Connected to wallet:', address);
-  } catch (error) {
-    console.error('Connection failed:', error);
-  }
-});
-
-// Send transaction
-document.getElementById('sendButton').addEventListener('click', async () => {
-  try {
-    const txHash = await sendTransaction(
-      'RAddress...',  // recipient address
-      1.0,            // amount
-      'VRSCTEST'      // currency
-    );
-    console.log('Transaction sent:', txHash);
-  } catch (error) {
-    console.error('Send failed:', error);
-  }
-});
 ```
 
 ## Development

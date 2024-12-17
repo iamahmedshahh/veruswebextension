@@ -1,5 +1,5 @@
 <script setup>
-import { computed, onMounted } from 'vue';
+import { computed, onMounted, ref } from 'vue';
 import { useStore } from 'vuex';
 import { useRoute } from 'vue-router';
 import browser from 'webextension-polyfill';
@@ -10,6 +10,7 @@ import SessionService from './store/services/SessionService';
 
 const store = useStore();
 const route = useRoute();
+const isPopupAction = ref(false);
 
 // Computed properties from store
 const isInitialized = computed(() => store.getters['wallet/isWalletInitialized']);
@@ -21,6 +22,9 @@ const loading = computed(() => store.getters['wallet/isLoading']);
 onMounted(async () => {
   try {
     console.log('App mounted, initializing...');
+    
+    // Check if this is opened as a popup action (no route)
+    isPopupAction.value = !route.name && window.location.hash === '';
     
     // Initialize session service
     SessionService.init();
@@ -44,10 +48,10 @@ onMounted(async () => {
 
 <template>
   <div class="app-container">
-    <!-- Show router view for specific routes like /unlock -->
-    <router-view v-if="route.name === 'unlock'"></router-view>
+    <!-- Show router view for extension popup flows -->
+    <router-view v-if="route.name"></router-view>
     
-    <!-- Show normal wallet UI for other routes -->
+    <!-- Show normal wallet UI -->
     <template v-else>
       <div v-if="loading" class="loading">
         <div class="loading-spinner"></div>
@@ -74,30 +78,9 @@ onMounted(async () => {
 </template>
 
 <style>
-:root {
-  --primary-color: #3498db;
-  --secondary-color: #2ecc71;
-  --background-color: #f8f9fa;
-  --text-color: #2c3e50;
-  --border-color: #e2e8f0;
-  --extension-width: 360px;
-  --extension-height: 600px;
-  --error-color: #ef4444;
-  --warning-color: #f1c40f;
-  --input-background: #f3f4f6;
-}
-
-body {
-  margin: 0;
-  padding: 0;
-  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
-  background-color: var(--background-color);
-  color: var(--text-color);
-}
-
 .app-container {
-  width: var(--extension-width);
-  height: var(--extension-height);
+  width: 360px;
+  height: 600px;
   overflow-y: auto;
   background-color: white;
   box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
@@ -115,63 +98,33 @@ body {
 .loading-spinner {
   width: 40px;
   height: 40px;
-  border: 3px solid var(--border-color);
-  border-top-color: var(--primary-color);
+  border: 4px solid #f3f3f3;
+  border-top: 4px solid #3498db;
   border-radius: 50%;
   animation: spin 1s linear infinite;
   margin-bottom: 1rem;
 }
 
 .loading-text {
+  color: #666;
   font-size: 1.1rem;
-  color: var(--text-color);
 }
 
 @keyframes spin {
-  to {
-    transform: rotate(360deg);
-  }
+  0% { transform: rotate(0deg); }
+  100% { transform: rotate(360deg); }
 }
 
 .error {
-  padding: 1rem;
   margin: 1rem;
+  padding: 1rem;
   background-color: #fee2e2;
-  border: 1px solid var(--error-color);
+  border: 1px solid #ef4444;
   border-radius: 0.375rem;
   color: #991b1b;
 }
 
 .content {
   height: 100%;
-}
-
-/* Common form styles */
-.form-group {
-  margin-bottom: 1rem;
-}
-
-.form-input {
-  width: 100%;
-  padding: 0.75rem;
-  border: 1px solid var(--border-color);
-  border-radius: 0.375rem;
-  background: var(--input-background);
-  color: var(--text-color);
-}
-
-.form-input:focus {
-  outline: none;
-  border-color: var(--primary-color);
-  box-shadow: 0 0 0 2px rgba(52, 152, 219, 0.2);
-}
-
-/* Card styles */
-.card {
-  background: white;
-  border: 1px solid var(--border-color);
-  border-radius: 0.5rem;
-  padding: 1.5rem;
-  margin-bottom: 1rem;
 }
 </style>

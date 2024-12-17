@@ -32,9 +32,8 @@ export default defineConfig({
           'activeTab'
         ],
         host_permissions: [
-          "http://localhost:*/*",
-          "http://127.0.0.1:*/*",
-          "https://*/*"
+          "http://localhost:5173/*",
+          "http://localhost:3000/*"
         ],
         action: {
           default_popup: 'popup.html'
@@ -46,30 +45,22 @@ export default defineConfig({
         content_scripts: [
           {
             matches: [
-              "http://localhost:*/*",
-              "http://127.0.0.1:*/*",
-              "https://*/*"
+              "http://localhost:5173/*",
+              "http://localhost:3000/*"
             ],
             js: ["src/contentScript.js"],
             run_at: "document_start"
           }
         ],
-        web_accessible_resources: [
-          {
-            resources: [
-              "provider.js",
-              "initProvider.js"
-            ],
-            matches: [
-              "http://localhost:*/*",
-              "http://127.0.0.1:*/*",
-              "https://*/*"
-            ]
-          }
-        ],
+        web_accessible_resources: [{
+          resources: ["provider.js"],
+          matches: [
+            "http://localhost:5173/*",
+            "http://localhost:3000/*"
+          ]
+        }],
         content_security_policy: {
-          extension_pages: "script-src 'self' 'wasm-unsafe-eval'; object-src 'self'",
-          sandbox: "sandbox allow-scripts allow-forms allow-popups allow-modals; script-src 'self' 'unsafe-inline' 'unsafe-eval'; child-src 'self';"
+          extension_pages: "script-src 'self' 'wasm-unsafe-eval'; object-src 'self'"
         },
         icons: {
           "16": "icons/icon16.png",
@@ -93,14 +84,15 @@ export default defineConfig({
     rollupOptions: {
       input: {
         popup: path.resolve(__dirname, 'popup.html'),
-        provider: path.resolve(__dirname, 'src/provider.js'),
-        initProvider: path.resolve(__dirname, 'src/initProvider.js')
+        provider: path.resolve(__dirname, 'src/provider.js')
       },
       output: {
         entryFileNames: (chunkInfo) => {
-          if (chunkInfo.name === 'provider' || chunkInfo.name === 'initProvider') {
+          // Keep provider.js name as is
+          if (chunkInfo.name === 'provider') {
             return '[name].js';
           }
+          // Hash other files
           return 'assets/[name]-[hash].js';
         }
       }

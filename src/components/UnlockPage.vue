@@ -76,9 +76,34 @@ export default {
             id: parseInt(this.requestId),
             success: true
           });
-          
-          // Show the connect approval page
-          window.location.hash = `/connect?id=${this.requestId}`;
+
+          // Get origin from URL params
+          const params = new URLSearchParams(window.location.hash.split('?')[1]);
+          const origin = decodeURIComponent(params.get('origin'));
+
+          // Check if we're already connected to this site
+          const { connectedSites = [] } = await browser.storage.local.get('connectedSites');
+          const isAlreadyConnected = connectedSites.some(site => site.origin === origin);
+
+          if (isAlreadyConnected) {
+            // If already connected, send auto-approval
+            await browser.runtime.sendMessage({
+              type: 'CONNECT_RESPONSE',
+              id: parseInt(this.requestId),
+              approved: true
+            });
+
+            // Close the window
+            const currentWindow = await browser.windows.getCurrent();
+            if (currentWindow) {
+              await browser.windows.remove(currentWindow.id);
+            } else {
+              window.close();
+            }
+          } else {
+            // If not connected, show the connect approval page
+            window.location.hash = `/connect?id=${this.requestId}&origin=${encodeURIComponent(origin)}`;
+          }
         } else {
           // If no request ID, just close the window
           const currentWindow = await browser.windows.getCurrent();
@@ -89,18 +114,8 @@ export default {
           }
         }
       } catch (error) {
-        console.error('Failed to unlock wallet:', error);
-        this.error = error.message || 'Failed to unlock wallet';
-        
-        // Send error message back to background script
-        if (this.requestId) {
-          await browser.runtime.sendMessage({
-            type: 'UNLOCK_RESULT',
-            id: parseInt(this.requestId),
-            success: false,
-            error: this.error
-          });
-        }
+        console.error('Unlock failed:', error);
+        this.error = error.message;
       } finally {
         this.isLoading = false;
       }

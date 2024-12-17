@@ -6,15 +6,15 @@
   "permissions": [
     "storage",
     "tabs",
-    "activeTab"
+    "activeTab",
+    "scripting"
   ],
   "host_permissions": [
     "http://localhost:*/*",
-    "http://127.0.0.1:*/*",
     "https://*/*"
   ],
   "action": {
-    "default_popup": "index.html",
+    "default_popup": "popup.html",
     "default_icon": {
       "16": "icons/icon16.png",
       "48": "icons/icon48.png",
@@ -22,32 +22,28 @@
     }
   },
   "background": {
-    "service_worker": "background.js",
+    "service_worker": "src/background.js",
     "type": "module"
   },
   "content_scripts": [
     {
       "matches": [
         "http://localhost:*/*",
-        "http://127.0.0.1:*/*",
         "https://*/*"
       ],
-      "js": ["contentScript.js"],
+      "js": ["src/contentScript.js"],
       "run_at": "document_start",
       "all_frames": false
     }
   ],
   "web_accessible_resources": [
     {
-      "resources": [
-        "provider.js",
-        "initProvider.js"
-      ],
+      "resources": ["provider.js"],
       "matches": [
         "http://localhost:*/*",
-        "http://127.0.0.1:*/*",
         "https://*/*"
-      ]
+      ],
+      "use_dynamic_url": true
     }
   ],
   "icons": {

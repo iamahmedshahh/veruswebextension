@@ -15,6 +15,7 @@ dist-ssr
 test
 *.crx
 *.pem
+*.zip
 
 # Editor directories and files
 .vscode/*
