@@ -1,13 +1,13 @@
 import { makeRPCCall } from './verus-rpc';
-import * as bitcoin from '@bitgo/utxo-lib';
+import pkg from '@bitgo/utxo-lib';
 import { Buffer } from 'buffer';
 
-
+// Polyfill Buffer for browser compatibility
 global.Buffer = Buffer;
 
 // Network configuration for Verus
-const NETWORK = bitcoin.networks.verustest;
-const { ECPair, TransactionBuilder } = bitcoin;
+const NETWORK = pkg.networks.verustest;
+const { ECPair, TransactionBuilder } = pkg;
 
 // Constants
 const SATS_PER_COIN = 100000000;
@@ -92,93 +92,64 @@ export async function sendCurrency(fromAddress, toAddress, amount, privateKeyWIF
         txBuilder.setVersionGroupId(0x892f2085);
 
         // Add all inputs
-        console.log('Adding inputs to transaction...');
-        let runningTotal = 0;
+        let runningTotal = 0;  
         for (const utxo of relevantUtxos) {
-            console.log('Adding input:', {
-                txid: utxo.txid,
-                outputIndex: utxo.outputIndex,
-                satoshis: utxo.satoshis
-            });
             txBuilder.addInput(utxo.txid, utxo.outputIndex);
-            runningTotal += utxo.satoshis;
+            runningTotal += Number(utxo.satoshis);  
             console.log('Running total:', runningTotal / SATS_PER_COIN, currency);
         }
 
         // Calculate output amounts
-        const satoshisToSend = Math.floor(amount * SATS_PER_COIN);
-        const fee = DEFAULT_FEE;
+        const satoshisToSend = Math.floor(amount * SATS_PER_COIN);  
+        const fee = 20000; 
         
         if (runningTotal < satoshisToSend + fee) {
             throw new Error(`Insufficient funds. Required: ${(satoshisToSend + fee) / SATS_PER_COIN} ${currency}, Available: ${runningTotal / SATS_PER_COIN} ${currency}`);
         }
 
         // Add recipient output
-        console.log('Adding recipient output:', { 
-            toAddress, 
-            amount: satoshisToSend,
-            inVRSC: satoshisToSend / SATS_PER_COIN 
-        });
         txBuilder.addOutput(toAddress, satoshisToSend);
 
         // Calculate and add change output
         const changeAmount = runningTotal - satoshisToSend - fee;
         if (changeAmount > DUST_THRESHOLD) {
-            console.log('Adding change output:', { 
-                toAddress: fromAddress, 
-                amount: changeAmount,
-                inVRSC: changeAmount / SATS_PER_COIN 
-            });
             txBuilder.addOutput(fromAddress, changeAmount);
             console.log('Change output added:', changeAmount / SATS_PER_COIN, currency);
         }
 
-        // Sign all inputs
-        console.log('Starting to sign inputs...');
-        // ... (other imports and constants remain unchanged)
-
+        // Sign each input with proper value conversion
         for (let i = 0; i < relevantUtxos.length; i++) {
             const utxo = relevantUtxos[i];
             console.log('Signing input', i, utxo);
-        
+
             try {
-                const hashType = bitcoin.Transaction.SIGHASH_ALL;
-        
                 // Validate KeyPair
-                let keyPair = ECPair.fromWIF(privateKeyWIF, NETWORK);
                 if (!keyPair.publicKey) {
                     console.log('Manually deriving publicKey...');
                     keyPair.publicKey = keyPair.getPublicKeyBuffer();
                 }
-                console.log('KeyPair publicKey:', keyPair.publicKey ? keyPair.publicKey.toString('hex') : 'undefined');
-        
+                console.log('KeyPair publicKey:', keyPair.publicKey.toString('hex'));
+
                 // Generate previous output script
-                const prevOutScript = bitcoin.address.toOutputScript(fromAddress, NETWORK);
+                const prevOutScript = pkg.address.toOutputScript(fromAddress, NETWORK);
                 console.log('PrevOutScript (hex):', prevOutScript.toString('hex'));
-        
+
                 // Debug TransactionBuilder inputs
                 const input = txBuilder.inputs[i];
                 console.log('Input at index', i, input);
-        
-                // Convert witness value to Number and ensure it's a valid number
-                const witnessValue = typeof utxo.satoshis === 'object' && utxo.satoshis.toString ? 
-                    parseInt(utxo.satoshis.toString()) : 
-                    Number(utxo.satoshis);
-                    
-                if (isNaN(witnessValue)) {
-                    throw new Error('Invalid witness value: ' + utxo.satoshis);
-                }
-                console.log('Witness value:', witnessValue);
 
-                // Signing
+                // Ensure satoshis is a number
+                const satoshis = Number(utxo.satoshis);
+                console.log('Satoshis as number:', satoshis);
+
                 txBuilder.sign(
                     i,
                     keyPair,
                     null,
-                    bitcoin.Transaction.SIGHASH_ALL,
-                    BigInt(relevantUtxos[i].satoshis) // Convert to BigInt explicitly
+                    pkg.Transaction.SIGHASH_ALL,
+                    satoshis
                 );
-        
+
                 console.log('Successfully signed input', i);
             } catch (error) {
                 console.error('Error signing input', i, error);
@@ -248,7 +219,7 @@ export function validateAddress(address) {
         }
 
         // Try to decode the address
-        bitcoin.address.fromBase58Check(address);
+        pkg.address.fromBase58Check(address);
         return true;
     } catch (error) {
         console.error('Address validation error:', error);
