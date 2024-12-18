@@ -131,18 +131,6 @@ browser.runtime.onMessage.addListener((message, sender) => {
           return { error: 'No wallet configured' };
         }
 
-        // Check if wallet is locked
-        if (walletState.isLocked) {
-          console.log('[Verus Background] Wallet is locked');
-          await browser.windows.create({
-            url: 'popup.html#/unlock',
-            type: 'popup',
-            width: 400,
-            height: 600
-          });
-          return { error: 'Wallet is locked' };
-        }
-
         // Check if site is already connected
         if (extensionState.connectedSites.has(sender.origin)) {
           console.log('[Verus Background] Site already connected');
@@ -154,31 +142,82 @@ browser.runtime.onMessage.addListener((message, sender) => {
           };
         }
 
-        // Generate unique request ID
-        const requestId = Math.random().toString(36).substring(7);
-        console.log('[Verus Background] Generated request ID:', requestId);
+        // Check login state from session storage
+        const { isLoggedIn } = await browser.storage.session.get('isLoggedIn');
         
-        // Store the pending request with tab info
-        extensionState.pendingRequests.set(requestId, {
-          origin: sender.origin,
-          tabId: sender.tab.id,
-          timestamp: Date.now()
-        });
-        console.log('[Verus Background] Stored pending request:', extensionState.pendingRequests.get(requestId));
+        if (!isLoggedIn) {
+          console.log('[Verus Background] Wallet is locked, showing unlock page');
+          // Generate unique request ID for the connection request
+          const requestId = Math.random().toString(36).substring(7);
+          
+          // Store the pending request
+          extensionState.pendingRequests.set(requestId, {
+            type: 'connect',
+            origin: sender.origin,
+            tabId: sender.tab.id
+          });
+          
+          // Open unlock page with the request ID
+          await browser.windows.create({
+            url: `popup.html#/unlock?requestId=${requestId}&origin=${encodeURIComponent(sender.origin)}`,
+            type: 'popup',
+            width: 400,
+            height: 600
+          });
+          return { error: 'Wallet is locked' };
+        }
 
-        // Open connect approval window with request ID
-        const popup = await browser.windows.create({
-          url: `popup.html#/connect?origin=${encodeURIComponent(sender.origin)}&requestId=${requestId}`,
+        // If wallet is unlocked, show connection approval
+        console.log('[Verus Background] Wallet is unlocked, showing approval page');
+        const requestId = Math.random().toString(36).substring(7);
+        
+        // Store the pending request
+        extensionState.pendingRequests.set(requestId, {
+          type: 'connect',
+          origin: sender.origin,
+          tabId: sender.tab.id
+        });
+        
+        // Open approval page
+        await browser.windows.create({
+          url: `popup.html#/approve?requestId=${requestId}&origin=${encodeURIComponent(sender.origin)}`,
           type: 'popup',
           width: 400,
           height: 600
         });
-        console.log('[Verus Background] Opened popup window:', popup);
         
-        return { status: 'WAITING', message: 'Awaiting connection approval' };
-      } catch (err) {
-        console.error('[Verus Background] Error handling connect request:', err);
-        return { error: err.message };
+        return { status: 'awaitingApproval' };
+      } catch (error) {
+        console.error('[Verus Background] Error handling connect request:', error);
+        return { error: error.message };
+      }
+    })();
+  }
+
+  // Handle unlock request from popup
+  if (message.type === 'UNLOCK_REQUEST') {
+    return (async () => {
+      try {
+        console.log('[Verus Background] Processing unlock request');
+        
+        // Get the stored wallet data
+        const { wallet } = await browser.storage.local.get('wallet');
+        if (!wallet) {
+          throw new Error('No wallet found');
+        }
+
+        // Set session storage to indicate logged in state
+        await browser.storage.session.set({ isLoggedIn: true });
+        
+        // Update wallet state
+        walletState.isLocked = false;
+        walletState.address = wallet.address;
+
+        console.log('[Verus Background] Wallet unlocked successfully');
+        return { success: true };
+      } catch (error) {
+        console.error('[Verus Background] Unlock error:', error);
+        return { error: error.message };
       }
     })();
   }
@@ -247,10 +286,7 @@ browser.runtime.onMessage.addListener((message, sender) => {
         // Notify content script of approval
         await browser.tabs.sendMessage(request.tabId, {
           type: 'CONNECT_RESULT',
-          result: {
-            connected: true,
-            address: walletState.address
-          }
+          address: walletState.address
         });
 
         // Clean up the request only after successful handling

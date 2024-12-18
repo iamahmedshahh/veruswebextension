@@ -32,14 +32,18 @@
         // Then handle pending requests
         const pendingRequest = this._pendingRequests.get(requestType);
         if (pendingRequest) {
-          this._pendingRequests.delete(requestType);
           if (response.error) {
             pendingRequest.reject(new Error(response.error));
+            this._pendingRequests.delete(requestType);
           } else if (response.result) {
             pendingRequest.resolve(response.result);
-          } else if (response.status === 'WAITING') {
+            this._pendingRequests.delete(requestType);
+          } else if (response.status === 'awaitingApproval') {
             // Don't resolve/reject for waiting status
-            console.log('[Verus Provider] Waiting for approval:', response.message);
+            console.log('[Verus Provider] Waiting for approval');
+          } else if (response.status === 'connected') {
+            pendingRequest.resolve({ address: response.address });
+            this._pendingRequests.delete(requestType);
           }
         }
       });
@@ -50,41 +54,30 @@
       
       if (requestType === 'VERUS_CONNECT_REQUEST') {
         if (response.error) {
-          this._connecting = false;
-          this._connected = false;
-          this._address = null;
-          this._emit('error', new Error(response.error));
-          
-          // Reject the connect promise if it exists
-          if (this._connectPromise) {
-            this._connectPromise.reject(new Error(response.error));
-            this._connectPromise = null;
+          // Only reset state if it's not a "wallet locked" error
+          if (response.error !== 'Wallet is locked') {
+            this._connecting = false;
+            this._connected = false;
+            this._address = null;
+            this._emit('error', new Error(response.error));
           }
-        } else if (response.status === 'WAITING') {
-          // Keep connecting state for waiting status
+        } else if (response.status === 'awaitingApproval') {
+          // Keep connecting state while waiting for approval
           this._connecting = true;
-          this._emit('waiting', { message: response.message });
-        } else if (response.connected && response.address) {
+          this._emit('waiting', { message: 'Awaiting connection approval' });
+        } else if (response.status === 'connected' || (response.result && response.result.connected)) {
           this._connected = true;
           this._connecting = false;
-          this._address = response.address;
+          this._address = response.result?.address || response.address;
           
           console.log('[Verus Provider] Connected with address:', this._address);
           
           // Emit events
           this._emit('connect', { address: this._address });
           this._emit('accountsChanged', [this._address]);
-          
-          // Resolve the connect promise if it exists
-          if (this._connectPromise) {
-            this._connectPromise.resolve({ address: this._address });
-            this._connectPromise = null;
-          }
         }
       } else if (requestType === 'VERUS_CHECK_CONNECTION') {
-        if (response.error) {
-          console.error('[Verus Provider] Error checking connection state:', response.error);
-        } else if (response.connected && response.address) {
+        if (!response.error && response.connected) {
           this._connected = true;
           this._address = response.address;
           console.log('[Verus Provider] Already connected:', this._address);
@@ -96,7 +89,6 @@
 
     async _checkConnectionState() {
       try {
-        // Request current connection state
         window.postMessage({
           type: 'VERUS_CHECK_CONNECTION'
         }, '*');
@@ -138,21 +130,8 @@
     }
 
     async getAccounts() {
-      console.log('[Verus Provider] Getting accounts, connected:', this._connected);
       if (!this._connected) return [];
-      if (this._address) return [this._address];
-      
-      try {
-        return await new Promise((resolve, reject) => {
-          this._pendingRequests.set('VERUS_GET_ACCOUNTS', { resolve, reject });
-          window.postMessage({
-            type: 'VERUS_GET_ACCOUNTS'
-          }, '*');
-        });
-      } catch (error) {
-        console.error('[Verus Provider] Error getting accounts:', error);
-        return [];
-      }
+      return this._address ? [this._address] : [];
     }
 
     async connect() {
@@ -163,12 +142,10 @@
       }
       
       if (this._connecting) {
-        console.log('[Verus Provider] Already connecting, waiting for existing promise...');
-        if (this._connectPromise) {
-          return new Promise((resolve, reject) => {
-            this._connectPromise = { resolve, reject };
-          });
-        }
+        console.log('[Verus Provider] Already connecting...');
+        return new Promise((resolve, reject) => {
+          this._pendingRequests.set('VERUS_CONNECT_REQUEST', { resolve, reject });
+        });
       }
 
       this._connecting = true;
@@ -176,19 +153,17 @@
       
       try {
         return await new Promise((resolve, reject) => {
-          this._connectPromise = { resolve, reject };
           this._pendingRequests.set('VERUS_CONNECT_REQUEST', { resolve, reject });
-          
           window.postMessage({
             type: 'VERUS_CONNECT_REQUEST'
           }, '*');
         });
       } catch (error) {
-        if (!error.message.includes('Awaiting connection approval')) {
+        // Only reset state if it's not waiting for approval
+        if (!error.message.includes('Awaiting approval')) {
           this._connecting = false;
           this._connected = false;
           this._address = null;
-          this._connectPromise = null;
         }
         throw error;
       }

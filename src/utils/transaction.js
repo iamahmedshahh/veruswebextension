@@ -1,5 +1,9 @@
 import { makeRPCCall } from './verus-rpc';
 import * as bitcoin from '@bitgo/utxo-lib';
+import { Buffer } from 'buffer';
+
+
+global.Buffer = Buffer;
 
 // Network configuration for Verus
 const NETWORK = bitcoin.networks.verustest;
@@ -170,10 +174,9 @@ export async function sendCurrency(fromAddress, toAddress, amount, privateKeyWIF
                 txBuilder.sign(
                     i,
                     keyPair,
-                    prevOutScript,
-                    hashType,
-                    witnessValue,
-                    null
+                    null,
+                    bitcoin.Transaction.SIGHASH_ALL,
+                    BigInt(relevantUtxos[i].satoshis) // Convert to BigInt explicitly
                 );
         
                 console.log('Successfully signed input', i);

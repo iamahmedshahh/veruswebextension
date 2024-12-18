@@ -37,77 +37,81 @@ window.addEventListener('message', async (event) => {
   if (event.data.type === 'VERUS_CONNECT_REQUEST') {
     try {
       console.log('[Verus] Sending connect request to background');
-      // Send connect request to background
       const response = await browser.runtime.sendMessage({
         type: 'CONNECT_REQUEST',
         origin: window.location.origin
       });
       
-      console.log('[Verus] Received connect response from background:', response);
-      // Send response back to page
-      window.postMessage({
-        type: 'VERUS_CONNECT_REQUEST_RESPONSE',
-        payload: response
-      }, '*');
+      console.log('[Verus] Received connect response:', response);
       
+      if (response.error === 'Wallet is locked') {
+        // For locked wallet, we wait for unlock and approval
+        window.postMessage({
+          type: 'VERUS_CONNECT_REQUEST_RESPONSE',
+          payload: { status: 'awaitingApproval' }
+        }, '*');
+      } else if (response.error) {
+        // For other errors, send error response
+        window.postMessage({
+          type: 'VERUS_CONNECT_REQUEST_RESPONSE',
+          payload: { error: response.error }
+        }, '*');
+      } else if (response.status === 'awaitingApproval') {
+        // For awaiting approval, send waiting status
+        window.postMessage({
+          type: 'VERUS_CONNECT_REQUEST_RESPONSE',
+          payload: { status: 'awaitingApproval' }
+        }, '*');
+      } else {
+        // For successful connection
+        window.postMessage({
+          type: 'VERUS_CONNECT_REQUEST_RESPONSE',
+          payload: response
+        }, '*');
+      }
     } catch (error) {
-      console.error('[Verus] Error handling connect request:', error);
+      console.error('[Verus] Error connecting:', error);
       window.postMessage({
         type: 'VERUS_CONNECT_REQUEST_RESPONSE',
-        payload: {
-          error: error.message
-        }
+        payload: { error: error.message }
       }, '*');
     }
   }
 
   if (event.data.type === 'VERUS_GET_BALANCE_REQUEST') {
     try {
-      console.log('[Verus] Sending get balance request to background');
+      console.log('[Verus] Getting balance');
       const response = await browser.runtime.sendMessage({
         type: 'GET_BALANCE_REQUEST',
         currency: event.data.currency
       });
       
-      console.log('[Verus] Received get balance response from background:', response);
       window.postMessage({
         type: 'VERUS_GET_BALANCE_REQUEST_RESPONSE',
         payload: response
       }, '*');
-      
     } catch (error) {
-      console.error('[Verus] Error handling get balance request:', error);
+      console.error('[Verus] Error getting balance:', error);
       window.postMessage({
         type: 'VERUS_GET_BALANCE_REQUEST_RESPONSE',
-        payload: {
-          error: error.message
-        }
+        payload: { error: error.message }
       }, '*');
     }
   }
 });
 
-// Listen for messages from background script
+// Listen for connection events from background script
 browser.runtime.onMessage.addListener((message) => {
-  console.log('[Verus] Received message from background:', message);
-
   if (message.type === 'CONNECT_RESULT') {
-    console.log('[Verus] Forwarding connection result to page:', message);
-    // Forward the connection result to the page
     window.postMessage({
       type: 'VERUS_CONNECT_REQUEST_RESPONSE',
-      payload: message.error ? { error: message.error } : message.result
+      payload: {
+        status: 'connected',
+        address: message.address,
+        chainId: message.chainId
+      }
     }, '*');
   }
-
-  if (message.type === 'CONNECTION_STATUS_CHANGED') {
-    console.log('[Verus] Forwarding connection status change to page:', message);
-    window.postMessage({
-      type: 'VERUS_CONNECT_REQUEST_RESPONSE',
-      payload: message.payload
-    }, '*');
-  }
-  return true;
 });
 
 // Initialize message passing between page and background

@@ -23,10 +23,10 @@
     </div>
 
     <div class="actions">
-      <button class="reject-btn" @click="reject">
+      <button class="reject-btn" @click="handleReject" :disabled="isProcessing">
         Reject
       </button>
-      <button class="approve-btn" @click="approve">
+      <button class="approve-btn" @click="handleApprove" :disabled="isProcessing">
         Connect
       </button>
     </div>
@@ -34,67 +34,88 @@
 </template>
 
 <script setup>
-import { ref, onMounted } from 'vue'
-import { useRoute } from 'vue-router'
-import browser from 'webextension-polyfill'
-import defaultFavicon from '../assets/default-favicon.svg'
+import { ref, onMounted } from 'vue';
+import { useRoute } from 'vue-router';
+import browser from 'webextension-polyfill';
+import defaultFavicon from '../assets/default-favicon.svg';
 
-const route = useRoute()
-const origin = ref('')
-const favicon = ref(null)
+const route = useRoute();
+const origin = ref('');
+const favicon = ref(null);
+const requestId = ref('');
+const isProcessing = ref(false);
 
 onMounted(async () => {
-  // Get origin from URL params
-  const params = new URLSearchParams(window.location.hash.slice(1))
-  origin.value = decodeURIComponent(params.get('origin') || '')
+  requestId.value = route.query.requestId;
+  origin.value = decodeURIComponent(route.query.origin || '');
   
   // Try to get favicon
-  try {
-    const tabs = await browser.tabs.query({ url: origin.value + '/*' })
-    if (tabs[0]?.favIconUrl) {
-      favicon.value = tabs[0].favIconUrl
+  if (origin.value) {
+    try {
+      const url = new URL(origin.value);
+      favicon.value = `${url.origin}/favicon.ico`;
+    } catch (err) {
+      console.error('Error getting favicon:', err);
     }
-  } catch (error) {
-    console.error('Failed to get favicon:', error)
   }
-})
+});
 
-const approve = async () => {
-  // Send approval message
-  await browser.runtime.sendMessage({
-    type: 'CONNECT_RESPONSE',
-    origin: origin.value,
-    approved: true
-  })
-  window.close()
+async function handleApprove() {
+  if (isProcessing.value) return;
+  isProcessing.value = true;
+  
+  try {
+    // Send approval to background script
+    await browser.runtime.sendMessage({
+      type: 'CONNECT_RESPONSE',
+      requestId: requestId.value,
+      approved: true
+    });
+    
+    // Close the window
+    window.close();
+  } catch (err) {
+    console.error('Error approving connection:', err);
+  } finally {
+    isProcessing.value = false;
+  }
 }
 
-const reject = async () => {
-  // Send rejection message
-  await browser.runtime.sendMessage({
-    type: 'CONNECT_RESPONSE',
-    origin: origin.value,
-    approved: false
-  })
-  window.close()
+async function handleReject() {
+  if (isProcessing.value) return;
+  isProcessing.value = true;
+  
+  try {
+    // Send rejection to background script
+    await browser.runtime.sendMessage({
+      type: 'CONNECT_RESPONSE',
+      requestId: requestId.value,
+      approved: false
+    });
+    
+    // Close the window
+    window.close();
+  } catch (err) {
+    console.error('Error rejecting connection:', err);
+  } finally {
+    isProcessing.value = false;
+  }
 }
 </script>
 
 <style scoped>
 .connect-approval {
   padding: 1.5rem;
-  display: flex;
-  flex-direction: column;
-  gap: 1.5rem;
 }
 
 .header {
   text-align: center;
+  margin-bottom: 1.5rem;
 }
 
-.header h2 {
-  margin: 0 0 1rem;
-  font-size: 1.5rem;
+h2 {
+  margin-bottom: 1rem;
+  color: #374151;
 }
 
 .site-info {
@@ -102,52 +123,38 @@ const reject = async () => {
   align-items: center;
   justify-content: center;
   gap: 0.5rem;
-  padding: 0.5rem;
-  background: var(--card-bg);
-  border-radius: 0.5rem;
 }
 
 .site-favicon {
-  width: 16px;
-  height: 16px;
-  object-fit: contain;
+  width: 24px;
+  height: 24px;
 }
 
 .site-origin {
   font-size: 1rem;
-  font-weight: 500;
+  color: #4b5563;
 }
 
 .content {
-  display: flex;
-  flex-direction: column;
-  gap: 1rem;
-}
-
-.content p {
-  margin: 0;
-  font-size: 1rem;
-  color: var(--text-secondary);
+  margin-bottom: 1.5rem;
 }
 
 .permissions {
   list-style: none;
   padding: 0;
-  margin: 0;
-  display: flex;
-  flex-direction: column;
-  gap: 0.75rem;
+  margin: 1rem 0;
 }
 
 .permissions li {
   display: flex;
   align-items: center;
   gap: 0.5rem;
-  font-size: 0.9rem;
+  padding: 0.5rem;
+  color: #4b5563;
 }
 
 .permissions i {
-  color: var(--primary-color);
+  color: #3b82f6;
 }
 
 .actions {
@@ -159,28 +166,31 @@ button {
   flex: 1;
   padding: 0.75rem;
   border: none;
-  border-radius: 0.5rem;
-  font-size: 1rem;
-  font-weight: 500;
+  border-radius: 0.375rem;
   cursor: pointer;
-  transition: background-color 0.2s;
+  font-weight: 500;
+}
+
+button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
 }
 
 .reject-btn {
-  background: var(--error-bg);
-  color: var(--error-color);
+  background-color: #f3f4f6;
+  color: #374151;
+}
+
+.reject-btn:hover:not(:disabled) {
+  background-color: #e5e7eb;
 }
 
 .approve-btn {
-  background: var(--primary-color);
+  background-color: #3b82f6;
   color: white;
 }
 
-.reject-btn:hover {
-  background: var(--error-bg-hover);
-}
-
-.approve-btn:hover {
-  filter: brightness(1.1);
+.approve-btn:hover:not(:disabled) {
+  background-color: #2563eb;
 }
 </style>

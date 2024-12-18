@@ -31,8 +31,7 @@ A browser extension wallet for Verus cryptocurrency that enables secure transact
 ### Future Roadmap
 - 📍 VerusID support
 - 📍 NFT support
-- 📍 Create a library specifically for this Extension
-- 📍 Integrate Defi LLAMA?
+- 📍 Integrate Defi LLAMA
 
 Your suport can help accelerate development and bring these features to life! 🚀
 

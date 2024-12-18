@@ -7,7 +7,11 @@ const routes = [
   {
     path: '/unlock',
     name: 'unlock',
-    component: UnlockPage
+    component: UnlockPage,
+    props: route => ({ 
+      requestId: route.query.requestId,
+      origin: route.query.origin
+    })
   },
   {
     path: '/setup',
@@ -15,9 +19,13 @@ const routes = [
     component: WalletSetup
   },
   {
-    path: '/connect',
-    name: 'connect',
-    component: ConnectApproval
+    path: '/approve',
+    name: 'approve',
+    component: ConnectApproval,
+    props: route => ({ 
+      requestId: route.query.requestId,
+      origin: route.query.origin
+    })
   }
 ];
 

@@ -74,7 +74,8 @@ export default defineConfig({
     alias: {
       '@': srcDir,
       'stream': 'stream-browserify',
-      'crypto': 'crypto-browserify'
+      'crypto': 'crypto-browserify',
+      'buffer': 'buffer'
     }
   },
   build: {
