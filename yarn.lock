@@ -1278,7 +1278,7 @@ bech32@0.0.3:
   resolved "https://registry.yarnpkg.com/bech32/-/bech32-0.0.3.tgz#736747c4a6531c5d8937d0400498de30e93b2f9c"
   integrity sha512-O+K1w8P/aAOLcYwwQ4sbiPYZ51ZIW95lnS4/6nE8Aib/z+OOddQIIPdu2qi94qGDp4HhYy/wJotttXKkak1lXg==
 
-bech32@2.0.0, bech32@^2.0.0:
+bech32@2.0.0:
   version "2.0.0"
   resolved "https://registry.npmjs.org/bech32/-/bech32-2.0.0.tgz"
   integrity sha512-LcknSilhIGatDAsY1ak2I8VtGaHNhgMSYVxFrGLXv+xLHytaKZKcaUJJUE7qmBr7h33o5YQwP55pMI0xmkpJwg==
@@ -1304,11 +1304,6 @@ bindings@^1.2.1, bindings@^1.3.0:
   integrity sha512-p2q/t/mhvuOj/UeLlV6566GD/guowlr0hHxClI0W9m7MWYkL1F0hLo+0Aexs9HSPCtR1SXQ0TD3MMKrXZajbiQ==
   dependencies:
     file-uri-to-path "1.0.0"
-
-"bip174@npm:@bitgo/bip174@3.0.0":
-  version "3.0.0"
-  resolved "https://registry.npmjs.org/@bitgo/bip174/-/bip174-3.0.0.tgz"
-  integrity sha512-Qv98vy6l1WgZwrxKx7IPYY91/+Z3tpALVSDn+Ic9qCsxygCq9gYw5eL8q3kd7LYTFLy/HgcqhcMOa83Spbp4JA==
 
 bip32@2.0.6:
   version "2.0.6"
@@ -1345,21 +1340,6 @@ bip66@^1.1.3:
 bitcoin-ops@^1.3.0, "bitcoin-ops@git+https://github.com/VerusCoin/bitcoin-ops":
   version "1.4.1"
   resolved "git+https://github.com/VerusCoin/bitcoin-ops#a5f8f56e658301bc39881d41740b3a0010530efd"
-
-bitcoinjs-lib@^7.0.0-rc.0:
-  version "7.0.0-rc.2"
-  resolved "https://registry.npmjs.org/@bitgo/bitcoinjs-lib/-/bitcoinjs-lib-7.0.0-rc.2.tgz"
-  integrity sha512-xpsTIfPNSbbCCrax5XNBHlpEjoFyS/r89n/rn3JQSBO/P5FVa6gpmlACFLR0EUFgUSIZYesDIeTgqRZEtHWjqA==
-  dependencies:
-    bech32 "^2.0.0"
-    bip174 "npm:@bitgo/bip174@3.0.0"
-    bs58check "^2.1.2"
-    create-hash "^1.1.0"
-    fastpriorityqueue "^0.7.1"
-    ripemd160 "^2.0.2"
-    typeforce "^1.11.3"
-    varuint-bitcoin "^1.1.2"
-    wif "^2.0.1"
 
 bn.js@5.2.1, bn.js@^5.2.1:
   version "5.2.1"
@@ -2110,11 +2090,6 @@ fast-json-stable-stringify@^2.1.0:
   version "2.1.0"
   resolved "https://registry.npmjs.org/fast-json-stable-stringify/-/fast-json-stable-stringify-2.1.0.tgz"
   integrity sha512-lhd/wF+Lk98HZoTCtlVraHtfh5XYijIjalXck7saUtuanSDyLMxnHhSXEDJqHxD7msR8D0uCmqlkwjCV8xvwHw==
-
-fastpriorityqueue@^0.7.1:
-  version "0.7.5"
-  resolved "https://registry.npmjs.org/fastpriorityqueue/-/fastpriorityqueue-0.7.5.tgz"
-  integrity sha512-3Pa0n9gwy8yIbEsT3m2j/E9DXgWvvjfiZjjqcJ+AdNKTAlVMIuFYrYG5Y3RHEM8O6cwv9hOpOWY/NaMfywoQVA==
 
 fb-watchman@^2.0.0:
   version "2.0.2"
@@ -3969,7 +3944,7 @@ typeforce@1.11.3:
   dependencies:
     inherits "^2.0.1"
 
-typeforce@^1.11.3, typeforce@^1.11.5:
+typeforce@^1.11.5:
   version "1.18.0"
   resolved "https://registry.npmjs.org/typeforce/-/typeforce-1.18.0.tgz"
   integrity sha512-7uc1O8h1M1g0rArakJdf0uLRSSgFcYexrVoKo+bzJd32gd4gDy2L/Z+8/FjPnU9ydY3pEnVPtr9FyscYY60K1g==
@@ -4042,13 +4017,6 @@ varuint-bitcoin@1.0.4:
   version "1.0.4"
   resolved "https://registry.yarnpkg.com/varuint-bitcoin/-/varuint-bitcoin-1.0.4.tgz#d812c5dae16e32f60544b6adee1d4be1307d0283"
   integrity sha512-2nW4pVicYWxOMY1u+3T3eFXw24wbFlKz+ug7hd02rozYmeFVBoC6LB7/P4E46jN9aD1ezhX01g2Uh4zrZ+9RWw==
-
-varuint-bitcoin@^1.1.2:
-  version "1.1.2"
-  resolved "https://registry.npmjs.org/varuint-bitcoin/-/varuint-bitcoin-1.1.2.tgz"
-  integrity sha512-4EVb+w4rx+YfVM32HQX42AbbT7/1f5zwAYhIujKXKk8NQK+JfRVl3pqT3hjNn/L+RstigmGGKVwHA/P0wgITZw==
-  dependencies:
-    safe-buffer "^5.1.1"
 
 "verus-typescript-primitives@git+https://github.com/VerusCoin/verus-typescript-primitives.git":
   version "1.0.0"
@@ -4190,7 +4158,7 @@ wif@2.0.1:
   dependencies:
     bs58check "^1.0.6"
 
-wif@^2.0.1, wif@^2.0.6:
+wif@^2.0.6:
   version "2.0.6"
   resolved "https://registry.npmjs.org/wif/-/wif-2.0.6.tgz"
   integrity sha512-HIanZn1zmduSF+BQhkE+YXIbEiH0xPr1012QbFEGB0xsKqJii0/SqJjyn8dFv6y36kOznMgMB+LGcbZTJ1xACQ==
