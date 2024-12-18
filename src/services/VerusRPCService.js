@@ -1,187 +1,153 @@
 import { makeRPCCall } from '../utils/verus-rpc';
 
-class VerusRPCService {
+export class VerusRPCService {
     constructor() {
         this.initialized = false;
-        this.testConnection = null;
     }
 
     async initialize() {
-        if (this.initialized) return;
-
         try {
-            // Test connection
-            const info = await makeRPCCall('getinfo');
-            if (!info || !info.version) {
-                throw new Error('Invalid RPC response');
-            }
-            
+            await makeRPCCall('getinfo', []);
             this.initialized = true;
-            console.log('RPC connection status: Connected');
         } catch (error) {
             console.error('Failed to initialize RPC:', error);
             throw new Error('Failed to connect to Verus RPC server');
         }
     }
 
-    async getBalance(address) {
-        if (!this.initialized) {
-            await this.initialize();
+    async getBalance(address, currency = 'VRSCTEST') {
+        if (!address) {
+            console.error('No address provided for balance check');
+            return 0;
         }
 
         try {
-            const result = await makeRPCCall('getaddressbalance', [{ addresses: [address] }]);
-            if (!result || typeof result.balance === 'undefined') {
-                throw new Error('Invalid balance response');
-            }
-            return result.balance;
-        } catch (error) {
-            console.error('Failed to get balance:', error);
-            throw new Error('Failed to fetch balance');
-        }
-    }
-
-    async getInfo() {
-        if (!this.initialized) {
-            await this.initialize();
-        }
-
-        try {
-            return await makeRPCCall('getinfo');
-        } catch (error) {
-            console.error('Failed to get info:', error);
-            throw new Error('Failed to fetch network info');
-        }
-    }
-
-    async getNewAddress() {
-        if (!this.initialized) {
-            await this.initialize();
-        }
-
-        try {
-            return await makeRPCCall('getnewaddress');
-        } catch (error) {
-            console.error('Failed to get new address:', error);
-            throw new Error('Failed to generate new address');
-        }
-    }
-
-    async validateAddress(address) {
-        if (!this.initialized) {
-            await this.initialize();
-        }
-
-        try {
-            const result = await makeRPCCall('validateaddress', [address]);
-            return result.isvalid === true;
-        } catch (error) {
-            console.error('Failed to validate address:', error);
-            throw new Error('Failed to validate address');
-        }
-    }
-
-    async getTransactions(address) {
-        if (!this.initialized) {
-            await this.initialize();
-        }
-
-        try {
-            return await makeRPCCall('getaddresstxids', [{ "addresses": [address] }]);
-        } catch (error) {
-            console.error('Failed to get transactions:', error);
-            throw error;
-        }
-    }
-
-    async getNetworkInfo() {
-        if (!this.initialized) {
-            await this.initialize();
-        }
-
-        try {
-            return await makeRPCCall('getnetworkinfo');
-        } catch (error) {
-            console.error('Failed to get network info:', error);
-            throw new Error('Failed to fetch network info');
-        }
-    }
-
-    async sendTransaction({ from, to, amount, privateKey }) {
-        if (!this.initialized) {
-            await this.initialize();
-        }
-
-        try {
-            // First validate the recipient address
-            const isValid = await this.validateAddress(to);
-            if (!isValid) {
-                throw new Error('Invalid recipient address');
+            // Get UTXOs for more detailed balance information
+            const utxoResponse = await makeRPCCall('getaddressutxos', [{
+                addresses: [address],
+                currencynames: true
+            }]);
+            
+            console.log('UTXO response for', currency, ':', utxoResponse);
+            
+            if (!utxoResponse || !Array.isArray(utxoResponse)) {
+                return 0;
             }
 
-            // Convert amount to satoshis (multiply by 100000000)
-            const satoshis = Math.round(amount * 100000000);
+            // Filter UTXOs for the target currency
+            const relevantUtxos = utxoResponse.filter(utxo => {
+                const hasCurrencyInNames = utxo.currencynames && utxo.currencynames[currency];
+                const hasCurrencyInValues = utxo.currencyvalues && utxo.currencyvalues[currency];
+                const isNativeCurrency = currency === 'VRSCTEST';
+                const hasNativeBalance = isNativeCurrency && utxo.satoshis > 0;
+                
+                return hasCurrencyInNames || hasCurrencyInValues || hasNativeBalance;
+            });
 
-            // Create raw transaction
-            const rawTx = await makeRPCCall('createrawtransaction', [
-                [], // No inputs - they will be selected automatically
-                {
-                    [to]: amount // Amount in VRSC
+            // Calculate total balance
+            let totalBalance = 0;
+            relevantUtxos.forEach(utxo => {
+                if (currency === 'VRSCTEST') {
+                    totalBalance += (utxo.satoshis || 0) / 100000000; // Convert satoshis to VRSCTEST
+                } else {
+                    const amountFromNames = utxo.currencynames?.[currency] || 0;
+                    const amountFromValues = utxo.currencyvalues?.[currency] || 0;
+                    totalBalance += parseFloat(amountFromNames || amountFromValues);
                 }
-            ]);
+            });
 
-            // Fund the raw transaction
-            const fundedTx = await makeRPCCall('fundrawtransaction', [rawTx]);
+            return totalBalance;
+        } catch (error) {
+            console.error(`Error fetching balance for ${currency}:`, error);
+            return 0;
+        }
+    }
 
-            // Sign the transaction with private key
-            const signedTx = await makeRPCCall('signrawtransaction', [
-                fundedTx.hex,
-                [], // No inputs to sign
-                [privateKey]
-            ]);
+    async getAllCurrencyBalances(address) {
+        if (!address) {
+            console.error('No address provided for balance check');
+            return {};
+        }
 
-            if (!signedTx.complete) {
-                throw new Error('Failed to sign transaction');
+        try {
+            // Get UTXOs for the address
+            const utxoResponse = await makeRPCCall('getaddressutxos', [{
+                addresses: [address],
+                currencynames: true
+            }]);
+
+            // Get currency definitions
+            const currencyList = await this.listCurrencies();
+            const currencyMap = {};
+            
+            // Create a map of currency IDs to their fully qualified names
+            if (Array.isArray(currencyList)) {
+                currencyList.forEach(currency => {
+                    if (currency?.currencydefinition) {
+                        const def = currency.currencydefinition;
+                        const id = def.currencyid;
+                        const name = def.fullyqualifiedname || def.name;
+                        currencyMap[id] = name;
+                    }
+                });
+            }
+            console.log('Currency map:', currencyMap);
+
+            const balances = {};
+            
+            if (!utxoResponse || !Array.isArray(utxoResponse)) {
+                return balances;
             }
 
-            // Send the signed transaction
-            const txid = await makeRPCCall('sendrawtransaction', [signedTx.hex]);
+            // Process each UTXO
+            utxoResponse.forEach(utxo => {
+                // Handle native currency (VRSCTEST)
+                if (utxo.satoshis > 0) {
+                    const nativeCurrency = 'VRSCTEST';
+                    balances[nativeCurrency] = (balances[nativeCurrency] || 0) + (utxo.satoshis / 100000000);
+                }
 
-            return {
-                txid,
-                amount: satoshis,
-                to,
-                from
-            };
+                // Handle other currencies from currencynames
+                if (utxo.currencynames) {
+                    Object.entries(utxo.currencynames).forEach(([currencyId, amount]) => {
+                        const currencyName = currencyMap[currencyId] || currencyId;
+                        balances[currencyName] = (balances[currencyName] || 0) + parseFloat(amount);
+                    });
+                }
+
+                // Handle currencies from currencyvalues
+                if (utxo.currencyvalues) {
+                    Object.entries(utxo.currencyvalues).forEach(([currencyId, amount]) => {
+                        const currencyName = currencyMap[currencyId] || currencyId;
+                        balances[currencyName] = (balances[currencyName] || 0) + parseFloat(amount);
+                    });
+                }
+            });
+
+            console.log('Processed balances:', balances);
+            return balances;
         } catch (error) {
-            console.error('Failed to send transaction:', error);
-            throw new Error(error.message || 'Failed to send transaction');
+            console.error('Error fetching all currency balances:', error);
+            return {};
         }
     }
 
     async listCurrencies() {
-        if (!this.initialized) {
-            await this.initialize();
-        }
-
         try {
-            const result = await makeRPCCall('listcurrencies');
-            // Extract currency names from the response
-            if (Array.isArray(result)) {
-                return result.map(currency => {
-                    if (currency.currencydefinition && currency.currencydefinition.name) {
-                        return currency.currencydefinition.name;
-                    }
-                    return null;
-                }).filter(name => name !== null);
+            const response = await makeRPCCall('listcurrencies');
+            console.log('Currency list response:', response);
+            
+            if (!Array.isArray(response)) {
+                console.error('Invalid currency list response:', response);
+                return [];
             }
-            return ['vrsctest']; // Fallback to default
+
+            return response;
         } catch (error) {
             console.error('Failed to list currencies:', error);
-            throw new Error('Failed to fetch currencies');
+            return [];
         }
     }
 }
 
-// Create a singleton instance
 export const verusRPC = new VerusRPCService();

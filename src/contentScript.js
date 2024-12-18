@@ -1,138 +1,126 @@
 import browser from 'webextension-polyfill';
 
-console.log('Verus Wallet content script loaded');
+console.log('[Verus] Content script loaded');
 
-// Initialize connection to background script
-const port = browser.runtime.connect({ name: 'content-script' });
+// Inject provider script
+const script = document.createElement('script');
+script.src = browser.runtime.getURL('provider.js');
+(document.head || document.documentElement).appendChild(script);
 
-// Create a promise resolver map for handling async responses
-const promiseResolvers = new Map();
-let messageId = 0;
-
-// Listen for messages from the background script
-port.onMessage.addListener((message) => {
-  console.log('Content script received message:', message);
-  
-  // Find and resolve the corresponding promise
-  if (message.id && promiseResolvers.has(message.id)) {
-    const { resolve, reject } = promiseResolvers.get(message.id);
-    promiseResolvers.delete(message.id);
-    
-    if (message.error) {
-      reject(new Error(message.error));
-    } else {
-      resolve(message.result);
-    }
-  }
-  
-  // Forward response to the page
-  window.postMessage({
-    type: `${message.type}_RESPONSE`,
-    result: message.result,
-    error: message.error
-  }, '*');
-});
-
-// Inject the Verus provider into the page
-const injectProvider = () => {
-  const script = document.createElement('script');
-  script.textContent = `
-    window.verus = {
-      isVerusWallet: true,
-      version: '1.0.0',
-      
-      // Request account access
-      requestAccounts: async () => {
-        return new Promise((resolve, reject) => {
-          window.addEventListener('message', function handler(event) {
-            if (event.source !== window) return;
-            if (event.data.type === 'VERUS_REQUEST_ACCOUNTS_RESPONSE') {
-              window.removeEventListener('message', handler);
-              if (event.data.error) {
-                reject(new Error(event.data.error));
-              } else {
-                resolve(event.data.result);
-              }
-            }
-          });
-          window.postMessage({ type: 'VERUS_REQUEST_ACCOUNTS' }, '*');
-        });
-      },
-      
-      // Get connected account
-      getAccount: async () => {
-        return new Promise((resolve, reject) => {
-          window.addEventListener('message', function handler(event) {
-            if (event.source !== window) return;
-            if (event.data.type === 'VERUS_GET_ACCOUNT_RESPONSE') {
-              window.removeEventListener('message', handler);
-              if (event.data.error) {
-                reject(new Error(event.data.error));
-              } else {
-                resolve(event.data.result);
-              }
-            }
-          });
-          window.postMessage({ type: 'VERUS_GET_ACCOUNT' }, '*');
-        });
-      },
-      
-      // Send transaction
-      sendTransaction: async (params) => {
-        return new Promise((resolve, reject) => {
-          window.addEventListener('message', function handler(event) {
-            if (event.source !== window) return;
-            if (event.data.type === 'VERUS_SEND_TRANSACTION_RESPONSE') {
-              window.removeEventListener('message', handler);
-              if (event.data.error) {
-                reject(new Error(event.data.error));
-              } else {
-                resolve(event.data.result);
-              }
-            }
-          });
-          window.postMessage({ 
-            type: 'VERUS_SEND_TRANSACTION',
-            params
-          }, '*');
-        });
-      }
-    };
-    
-    console.log('Verus provider injected');
-  `;
-  
-  document.documentElement.appendChild(script);
-  script.remove();
-};
-
-// Listen for messages from the injected provider
-window.addEventListener('message', (event) => {
+// Handle messages from the page
+window.addEventListener('message', async (event) => {
   if (event.source !== window) return;
   
-  const { type, params } = event.data;
+  console.log('[Verus] Received message from page:', event.data.type, event.data.payload);
   
-  if (type && type.startsWith('VERUS_')) {
-    // Create a unique message ID
-    const id = messageId++;
-    
-    // Create a promise resolver
-    const messagePromise = new Promise((resolve, reject) => {
-      promiseResolvers.set(id, { resolve, reject });
+  if (event.data.type === 'VERUS_CHECK_CONNECTION') {
+    try {
+      console.log('[Verus] Checking connection state');
+      const response = await browser.runtime.sendMessage({
+        type: 'CHECK_CONNECTION',
+        origin: window.location.origin
+      });
       
-      // Cleanup if no response is received
-      setTimeout(() => {
-        if (promiseResolvers.has(id)) {
-          promiseResolvers.delete(id);
-          reject(new Error('Request timeout'));
-        }
-      }, 30000); // 30 second timeout
-    });
-    
-    // Send message to background script
-    port.postMessage({ id, type, params });
+      window.postMessage({
+        type: 'VERUS_CHECK_CONNECTION_RESPONSE',
+        payload: response
+      }, '*');
+    } catch (error) {
+      console.error('[Verus] Error checking connection:', error);
+      window.postMessage({
+        type: 'VERUS_CHECK_CONNECTION_RESPONSE',
+        payload: { error: error.message }
+      }, '*');
+    }
+  }
+
+  if (event.data.type === 'VERUS_CONNECT_REQUEST') {
+    try {
+      console.log('[Verus] Sending connect request to background');
+      const response = await browser.runtime.sendMessage({
+        type: 'CONNECT_REQUEST',
+        origin: window.location.origin
+      });
+      
+      console.log('[Verus] Received connect response:', response);
+      
+      if (response.error === 'Wallet is locked') {
+        // For locked wallet, we wait for unlock and approval
+        window.postMessage({
+          type: 'VERUS_CONNECT_REQUEST_RESPONSE',
+          payload: { status: 'awaitingApproval' }
+        }, '*');
+      } else if (response.error) {
+        // For other errors, send error response
+        window.postMessage({
+          type: 'VERUS_CONNECT_REQUEST_RESPONSE',
+          payload: { error: response.error }
+        }, '*');
+      } else if (response.status === 'awaitingApproval') {
+        // For awaiting approval, send waiting status
+        window.postMessage({
+          type: 'VERUS_CONNECT_REQUEST_RESPONSE',
+          payload: { status: 'awaitingApproval' }
+        }, '*');
+      } else {
+        // For successful connection
+        window.postMessage({
+          type: 'VERUS_CONNECT_REQUEST_RESPONSE',
+          payload: response
+        }, '*');
+      }
+    } catch (error) {
+      console.error('[Verus] Error connecting:', error);
+      window.postMessage({
+        type: 'VERUS_CONNECT_REQUEST_RESPONSE',
+        payload: { error: error.message }
+      }, '*');
+    }
+  }
+
+  if (event.data.type === 'VERUS_GET_BALANCE_REQUEST') {
+    try {
+      console.log('[Verus] Getting balance');
+      const response = await browser.runtime.sendMessage({
+        type: 'GET_BALANCE_REQUEST',
+        currency: event.data.currency
+      });
+      
+      window.postMessage({
+        type: 'VERUS_GET_BALANCE_REQUEST_RESPONSE',
+        payload: response
+      }, '*');
+    } catch (error) {
+      console.error('[Verus] Error getting balance:', error);
+      window.postMessage({
+        type: 'VERUS_GET_BALANCE_REQUEST_RESPONSE',
+        payload: { error: error.message }
+      }, '*');
+    }
   }
 });
 
-// Inject provider when the content script loads
-injectProvider();
+// Listen for connection events from background script
+browser.runtime.onMessage.addListener((message) => {
+  if (message.type === 'CONNECT_RESULT') {
+    window.postMessage({
+      type: 'VERUS_CONNECT_REQUEST_RESPONSE',
+      payload: {
+        status: 'connected',
+        address: message.address,
+        chainId: message.chainId
+      }
+    }, '*');
+  }
+});
+
+// Initialize message passing between page and background
+browser.runtime.onConnect.addListener((port) => {
+  console.log('[Verus] Connected to background script');
+});
+
+// Inject the provider when document starts loading
+if (document.readyState === 'loading') {
+  document.addEventListener('DOMContentLoaded', () => {});
+} else {
+}

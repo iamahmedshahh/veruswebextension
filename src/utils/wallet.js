@@ -10,20 +10,11 @@ import {
   testConnection
 } from './verus-rpc.js';
 import crypto from 'crypto-browserify';
-import * as bitgo from '@bitgo/utxo-lib';
+import * as bitcoin from '@bitgo/utxo-lib';
 
 // Network configuration for Verus (both mainnet and testnet use same address format)
-const NETWORK = {
-  messagePrefix: '\x18Verus Signed Message:\n',
-  bip32: {
-    public: 0x0488B21E,
-    private: 0x0488ADE4
-  },
-  pubKeyHash: 0x3c,     // Verus address version (starts with R)
-  scriptHash: 0x3d,     // Verus P2SH version
-  wif: 0xBC,           // Verus WIF version
-  coin: 'vrsc'
-};
+const NETWORK = bitcoin.networks.verustest; 
+const { ECPair } = bitcoin;
 
 /**
  * Creates a new wallet with password protection
@@ -36,11 +27,11 @@ export async function createWallet(password) {
     
     // Generate wallet seed
     const entropy = crypto.randomBytes(32); // 256 bits of entropy
-    const mnemonic = bitgo.bip39.entropyToMnemonic(entropy);
-    const seed = bitgo.bip39.mnemonicToSeedSync(mnemonic);
+    const mnemonic = bitcoin.bip39.entropyToMnemonic(entropy);
+    const seed = bitcoin.bip39.mnemonicToSeedSync(mnemonic);
     
     // Derive the master key (BIP32)
-    const master = bitgo.bip32.fromSeed(seed, NETWORK);
+    const master = bitcoin.bip32.fromSeed(seed, NETWORK);
     
     // Derive the first account's external chain
     // m/44'/19167'/0'/0/0 for VRSC
@@ -48,8 +39,8 @@ export async function createWallet(password) {
     const child = master.derivePath(path);
     
     // Create key pair and address
-    const keyPair = bitgo.ECPair.fromPrivateKey(child.privateKey, { network: NETWORK });
-    const { address } = bitgo.payments.p2pkh({ 
+    const keyPair = ECPair.fromPrivateKey(Buffer.from(child.privateKey.toString('hex'), 'hex'), { network: NETWORK });
+    const { address } = bitcoin.payments.p2pkh({ 
       pubkey: keyPair.publicKey,
       network: NETWORK 
     });
@@ -97,39 +88,50 @@ export async function sendTransaction(password, toAddress, amount, memo = '') {
 
     // Decrypt private key
     const privateKey = await decrypt(encryptedPrivateKey, password);
-    const master = bitgo.bip32.fromSeed(bitgo.bip39.mnemonicToSeedSync(await decrypt(await browser.storage.local.get('encryptedMnemonic'), password)), NETWORK);
+    const master = bitcoin.bip32.fromSeed(bitcoin.bip39.mnemonicToSeedSync(await decrypt(await browser.storage.local.get('encryptedMnemonic'), password)), NETWORK);
     const child = master.derivePath(path);
-    const keyPair = bitgo.ECPair.fromPrivateKey(child.privateKey, { network: NETWORK });
+    const keyPair = ECPair.fromPrivateKey(Buffer.from(child.privateKey.toString('hex'), 'hex'), { network: NETWORK });
 
     // Get UTXOs
     const utxos = await getAddressUtxos(address);
     if (!utxos.length) throw new Error('No funds available');
 
     // Create and sign transaction
-    const tx = new bitgo.TransactionBuilder(NETWORK);
+    const tx = new bitcoin.TransactionBuilder(NETWORK);
     
-    let totalInput = 0;
+    // Set version for Overwinter support
+    tx.setVersion(4);
+    tx.setVersionGroupId(0x892f2085);
+    
+    let totalInput = BigInt(0);
     utxos.forEach(utxo => {
-      tx.addInput(utxo.txid, utxo.vout);
-      totalInput += utxo.satoshis;
+      tx.addInput(utxo.txid, utxo.outputIndex);
+      totalInput += BigInt(utxo.satoshis);
     });
 
-    const satoshiAmount = Math.floor(amount * 1e8);
-    const fee = 10000; // 0.0001 VRSC
+    const satoshiAmount = BigInt(Math.floor(amount * 1e8));
+    const fee = BigInt(20000); // 0.0002 VRSC
     
     if (totalInput < satoshiAmount + fee) {
       throw new Error('Insufficient funds');
     }
 
     // Add outputs
-    tx.addOutput(toAddress, satoshiAmount);
-    if (totalInput > satoshiAmount + fee) {
-      tx.addOutput(address, totalInput - satoshiAmount - fee);
+    tx.addOutput(toAddress, Number(satoshiAmount));
+    const changeAmount = Number(totalInput - satoshiAmount - fee);
+    if (changeAmount > 546) { // Dust threshold
+      tx.addOutput(address, changeAmount);
     }
 
     // Sign all inputs
-    utxos.forEach((_, index) => {
-      tx.sign(index, keyPair);
+    utxos.forEach((utxo, index) => {
+      tx.sign(
+        index,
+        keyPair,
+        null,
+        bitcoin.Transaction.SIGHASH_ALL,
+        utxo.satoshis
+      );
     });
 
     // Broadcast transaction

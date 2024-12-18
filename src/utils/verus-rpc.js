@@ -1,13 +1,25 @@
 // Verus RPC communication utilities
-const RPC_SERVER = import.meta.env.VITE_VRSCTEST_RPC_SERVER?.replace(/['"]/g, '') || 'https://api.verustest.net';
+// Default RPC configuration
+const DEFAULT_RPC_CONFIG = {
+    server: 'https://api.verustest.net',
+};
 
 /**
  * Make an RPC call to the Verus daemon
  * @param {string} method - The RPC method to call
  * @param {Array} params - The parameters to pass to the method
+ * @param {Object} config - RPC configuration (optional)
+ * @param {string} config.server - RPC server URL
+ * @param {string} config.username - RPC username
+ * @param {string} config.password - RPC password
+ * @param {string} currency - The currency to use (optional)
  * @returns {Promise<any>} - The response from the RPC server
  */
-async function makeRPCCall(method, params = []) {
+async function makeRPCCall(method, params = [], config = DEFAULT_RPC_CONFIG, currency = null) {
+    const RPC_SERVER = currency ? `${config.server}/${currency.toLowerCase()}` : config.server;
+    const RPC_USER = config.username;
+    const RPC_PASS = config.password;
+
     console.log('Making RPC call to', RPC_SERVER, '- Method:', method, 'Params:', params);
 
     try {
@@ -15,6 +27,7 @@ async function makeRPCCall(method, params = []) {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json',
+                'Authorization': 'Basic ' + btoa(`${RPC_USER}:${RPC_PASS}`)
             },
             body: JSON.stringify({
                 jsonrpc: '2.0',

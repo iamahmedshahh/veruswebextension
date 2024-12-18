@@ -6,7 +6,9 @@ import path from 'path';
 import { fileURLToPath } from 'url';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const srcDir = path.resolve(__dirname, 'src');
 
+// https://vitejs.dev/config/
 export default defineConfig({
   plugins: [
     vue(),
@@ -23,10 +25,18 @@ export default defineConfig({
         manifest_version: 3,
         name: 'Verus Web Wallet',
         version: '0.0.1',
-        description: 'A web wallet for Verus',
-        permissions: ['storage', 'activeTab'],
+        description: 'A secure web wallet for Verus cryptocurrency',
+        permissions: [
+          'storage',
+          'tabs',
+          'activeTab'
+        ],
+        host_permissions: [
+          "http://localhost:5173/*",
+          "http://localhost:3000/*"
+        ],
         action: {
-          default_popup: 'index.html'
+          default_popup: 'popup.html'
         },
         background: {
           service_worker: 'src/background.js',
@@ -34,50 +44,58 @@ export default defineConfig({
         },
         content_scripts: [
           {
-            matches: ['<all_urls>'],
-            js: ['src/contentScript.js']
+            matches: [
+              "http://localhost:5173/*",
+              "http://localhost:3000/*"
+            ],
+            js: ["src/contentScript.js"],
+            run_at: "document_start"
           }
-        ]
-      },
-      additionalInputs: {
-        html: ['index.html'],
-        scripts: ['src/background.js', 'src/contentScript.js']
+        ],
+        web_accessible_resources: [{
+          resources: ["provider.js"],
+          matches: [
+            "http://localhost:5173/*",
+            "http://localhost:3000/*"
+          ]
+        }],
+        content_security_policy: {
+          extension_pages: "script-src 'self' 'wasm-unsafe-eval'; object-src 'self'"
+        },
+        icons: {
+          "16": "icons/icon16.png",
+          "48": "icons/icon48.png",
+          "128": "icons/icon128.png"
+        }
       }
     })
   ],
   resolve: {
     alias: {
-      '@': path.resolve(__dirname, './src'),
-      buffer: 'buffer',
-      process: 'process/browser',
-      util: 'util',
-      stream: 'stream-browserify',
-      crypto: 'crypto-browserify'
+      '@': srcDir,
+      'stream': 'stream-browserify',
+      'crypto': 'crypto-browserify',
+      'buffer': 'buffer'
     }
-  },
-  define: {
-    'process.env': {},
-    global: 'globalThis'
   },
   build: {
-    target: 'esnext',
     outDir: 'dist',
     emptyOutDir: true,
+    sourcemap: process.env.NODE_ENV === 'development',
     rollupOptions: {
       input: {
-        main: 'src/main.js'
+        popup: path.resolve(__dirname, 'popup.html'),
+        provider: path.resolve(__dirname, 'src/provider.js')
       },
       output: {
-        entryFileNames: 'assets/[name].js',
-        chunkFileNames: 'assets/[name].js',
-        assetFileNames: 'assets/[name].[ext]'
-      }
-    }
-  },
-  optimizeDeps: {
-    esbuildOptions: {
-      define: {
-        global: 'globalThis'
+        entryFileNames: (chunkInfo) => {
+          // Keep provider.js name as is
+          if (chunkInfo.name === 'provider') {
+            return '[name].js';
+          }
+          // Hash other files
+          return 'assets/[name]-[hash].js';
+        }
       }
     }
   }

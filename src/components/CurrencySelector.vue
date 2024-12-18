@@ -22,17 +22,20 @@
                     class="search-input"
                 />
             </div>
-
             <div class="currencies">
                 <div 
                     v-for="currency in filteredCurrencies" 
-                    :key="currency"
+                    :key="currency.currencyid"
                     class="currency-item"
-                    :class="{ selected: isSelected(currency) }"
+                    :class="{ selected: isSelected(currency.name) }"
                     @click="toggleCurrency(currency)"
                 >
-                    <span class="currency-name">{{ currency }}</span>
-                    <span v-if="isSelected(currency)" class="selected-icon">✓</span>
+                    <div class="currency-info">
+                        <span class="currency-name">{{ currency.name }}</span>
+                        <span v-if="currency.fullyqualifiedname && currency.fullyqualifiedname !== currency.name" 
+                              class="currency-fullname">({{ currency.fullyqualifiedname }})</span>
+                    </div>
+                    <span v-if="isSelected(currency.name)" class="selected-icon">✓</span>
                 </div>
             </div>
         </div>
@@ -53,35 +56,57 @@ import { useStore } from 'vuex';
 export default {
     name: 'CurrencySelector',
     
-    setup() {
+    emits: ['close', 'currency-selected'],
+
+    setup(props, { emit }) {
         const store = useStore();
         const searchQuery = ref('');
 
         // Load currencies when component is mounted
         store.dispatch('currencies/fetchAvailableCurrencies');
 
-        const availableCurrencies = computed(() => store.getters['currencies/getAvailableCurrencies']);
-        const selectedCurrencies = computed(() => store.getters['currencies/getSelectedCurrencies']);
-        const loading = computed(() => store.getters['currencies/isLoading']);
-        const error = computed(() => store.getters['currencies/getError']);
+        const availableCurrencies = computed(() => {
+            const currencies = store.getters['currencies/getAvailableCurrencies'];
+            return currencies.map(currency => {
+                if (currency?.currencydefinition) {
+                    const def = currency.currencydefinition;
+                    return {
+                        currencyid: def.currencyid,
+                        name: def.name,
+                        fullyqualifiedname: def.fullyqualifiedname,
+                        systemid: def.systemid
+                    };
+                }
+                return null;
+            }).filter(c => c !== null);
+        });
+
+        const selectedCurrencies = computed(() => store.state.currencies.selectedCurrencies);
+        const loading = computed(() => store.state.currencies.loading);
+        const error = computed(() => store.state.currencies.error);
         const canAddMore = computed(() => store.getters['currencies/canAddMoreCurrencies']);
 
         const filteredCurrencies = computed(() => {
             const query = searchQuery.value.toLowerCase();
-            return availableCurrencies.value.filter(currency => 
-                currency.toLowerCase().includes(query)
-            );
+            return availableCurrencies.value.filter(currency => {
+                const nameMatch = currency.name.toLowerCase().includes(query);
+                const fullNameMatch = currency.fullyqualifiedname && 
+                                    currency.fullyqualifiedname.toLowerCase().includes(query);
+                return nameMatch || fullNameMatch;
+            });
         });
 
-        const isSelected = (currency) => {
-            return selectedCurrencies.value.includes(currency);
+        const isSelected = (currencyName) => {
+            return selectedCurrencies.value.includes(currencyName);
         };
 
         const toggleCurrency = (currency) => {
-            if (isSelected(currency)) {
-                store.dispatch('currencies/unselectCurrency', currency);
+            const currencyName = currency.name;
+            if (isSelected(currencyName)) {
+                store.dispatch('currencies/unselectCurrency', currencyName);
             } else if (canAddMore.value) {
-                store.dispatch('currencies/selectCurrency', currency);
+                store.dispatch('currencies/selectCurrency', currencyName);
+                emit('currency-selected', currencyName);
             }
         };
 
@@ -101,23 +126,27 @@ export default {
 
 <style scoped>
 .currency-selector {
-    padding: 1.5rem;
+    background: white;
+    border-radius: 8px;
+    padding: 1rem;
+    max-width: 500px;
+    width: 100%;
+    max-height: 80vh;
     display: flex;
     flex-direction: column;
-    height: 100%;
-    max-height: 600px;
 }
 
 .header {
     display: flex;
     justify-content: space-between;
     align-items: center;
-    margin-bottom: 1.5rem;
+    margin-bottom: 1rem;
+    padding-bottom: 0.5rem;
+    border-bottom: 1px solid #eee;
 }
 
 .header h3 {
     margin: 0;
-    font-size: 1.25rem;
 }
 
 .btn-close {
@@ -125,7 +154,7 @@ export default {
     border: none;
     font-size: 1.5rem;
     cursor: pointer;
-    padding: 0.5rem;
+    padding: 0.25rem 0.5rem;
 }
 
 .search-bar {
@@ -134,10 +163,9 @@ export default {
 
 .search-input {
     width: 100%;
-    padding: 0.75rem;
-    border: 1px solid var(--border-color);
-    border-radius: 0.375rem;
-    font-size: 0.875rem;
+    padding: 0.5rem;
+    border: 1px solid #ddd;
+    border-radius: 4px;
 }
 
 .currency-list {
@@ -146,7 +174,8 @@ export default {
 }
 
 .currencies {
-    display: grid;
+    display: flex;
+    flex-direction: column;
     gap: 0.5rem;
 }
 
@@ -155,54 +184,73 @@ export default {
     justify-content: space-between;
     align-items: center;
     padding: 0.75rem;
-    border: 1px solid var(--border-color);
-    border-radius: 0.375rem;
+    border: 1px solid #eee;
+    border-radius: 4px;
     cursor: pointer;
-    transition: all 0.2s ease;
+    transition: background-color 0.2s;
 }
 
 .currency-item:hover {
-    background-color: var(--hover-color);
+    background-color: #f5f5f5;
 }
 
 .currency-item.selected {
-    background-color: var(--primary-color);
-    color: white;
-    border-color: var(--primary-color);
+    background-color: #e3f2fd;
+    border-color: #2196f3;
+}
+
+.currency-info {
+    display: flex;
+    flex-direction: column;
+}
+
+.currency-name {
+    font-weight: 500;
+}
+
+.currency-fullname {
+    font-size: 0.85em;
+    color: #666;
 }
 
 .selected-icon {
+    color: #2196f3;
     font-weight: bold;
 }
 
 .footer {
-    margin-top: 1.5rem;
+    margin-top: 1rem;
+    padding-top: 1rem;
+    border-top: 1px solid #eee;
     display: flex;
     justify-content: space-between;
     align-items: center;
 }
 
 .selection-info {
-    font-size: 0.875rem;
-    color: var(--text-secondary);
+    color: #666;
 }
 
 .btn-primary {
-    padding: 0.5rem 1rem;
-    background-color: var(--primary-color);
+    background-color: #2196f3;
     color: white;
     border: none;
-    border-radius: 0.375rem;
+    padding: 0.5rem 1rem;
+    border-radius: 4px;
     cursor: pointer;
+}
+
+.btn-primary:hover {
+    background-color: #1976d2;
 }
 
 .loading, .error {
     text-align: center;
     padding: 2rem;
-    color: var(--text-secondary);
+    color: #666;
 }
 
 .error {
-    color: var(--error-color);
+    color: #f44336;
 }
 </style>
