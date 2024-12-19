@@ -5,7 +5,6 @@
   "description": "A secure web wallet for Verus cryptocurrency",
   "permissions": [
     "storage",
-    "tabs",
     "activeTab",
     "scripting"
   ],

@@ -1,6 +1,7 @@
 import { makeRPCCall } from './verus-rpc';
 import pkg from '@bitgo/utxo-lib';
 import { Buffer } from 'buffer';
+import BigInteger from 'bigi' // Import BigInteger library
 
 // Polyfill Buffer for browser compatibility
 global.Buffer = Buffer;
@@ -50,6 +51,12 @@ export async function sendCurrency(fromAddress, toAddress, amount, privateKeyWIF
             throw new Error('Invalid private key format. Must be in WIF format.');
         }
 
+        // Convert amount to satoshis
+        const SATS_PER_COIN = 1e8;
+        const amountToSend = amount;
+        const satoshiAmount = Math.floor(amountToSend * SATS_PER_COIN);
+        console.log('Amount in satoshis:', satoshiAmount);
+        
         // Step 1: Fetch UTXOs
         console.log('Fetching UTXOs for address:', fromAddress);
         const utxos = await makeRPCCall('getaddressutxos', [{
@@ -92,26 +99,26 @@ export async function sendCurrency(fromAddress, toAddress, amount, privateKeyWIF
         txBuilder.setVersionGroupId(0x892f2085);
 
         // Add all inputs
-        let runningTotal = 0;  
+        let runningTotal = BigInt(0);  
         for (const utxo of relevantUtxos) {
             txBuilder.addInput(utxo.txid, utxo.outputIndex);
-            runningTotal += Number(utxo.satoshis);  
-            console.log('Running total:', runningTotal / SATS_PER_COIN, currency);
+            runningTotal += BigInt(utxo.satoshis);  
+            console.log('Running total:', Number(runningTotal) / SATS_PER_COIN, currency);
         }
 
         // Calculate output amounts
-        const satoshisToSend = Math.floor(amount * SATS_PER_COIN);  
-        const fee = 20000; 
+        const satoshisToSend = BigInt(Math.floor(amountToSend * SATS_PER_COIN));  
+        const fee = BigInt(20000); 
         
         if (runningTotal < satoshisToSend + fee) {
-            throw new Error(`Insufficient funds. Required: ${(satoshisToSend + fee) / SATS_PER_COIN} ${currency}, Available: ${runningTotal / SATS_PER_COIN} ${currency}`);
+            throw new Error(`Insufficient funds. Required: ${Number(satoshisToSend + fee) / SATS_PER_COIN} ${currency}, Available: ${Number(runningTotal) / SATS_PER_COIN} ${currency}`);
         }
 
         // Add recipient output
-        txBuilder.addOutput(toAddress, satoshisToSend);
+        txBuilder.addOutput(toAddress, Number(satoshisToSend));
 
         // Calculate and add change output
-        const changeAmount = runningTotal - satoshisToSend - fee;
+        const changeAmount = Number(runningTotal - satoshisToSend - fee);
         if (changeAmount > DUST_THRESHOLD) {
             txBuilder.addOutput(fromAddress, changeAmount);
             console.log('Change output added:', changeAmount / SATS_PER_COIN, currency);
@@ -147,7 +154,7 @@ export async function sendCurrency(fromAddress, toAddress, amount, privateKeyWIF
                     keyPair,
                     null,
                     pkg.Transaction.SIGHASH_ALL,
-                    satoshis
+                    BigInteger(utxo.satoshis.toString()) // Convert satoshis to BigInteger
                 );
 
                 console.log('Successfully signed input', i);
