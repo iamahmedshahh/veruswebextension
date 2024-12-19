@@ -33,11 +33,14 @@ export default {
         },
 
         SET_SELECTED_CURRENCIES(state, currencies) {
-            // Ensure default currency is always included
-            if (!currencies.includes(DEFAULT_CURRENCY)) {
-                currencies = [DEFAULT_CURRENCY, ...currencies];
-            }
-            state.selectedCurrencies = currencies;
+            // Ensure default currency is always included and at the start of the array
+            const uniqueCurrencies = [...new Set([DEFAULT_CURRENCY, ...currencies])];
+            state.selectedCurrencies = uniqueCurrencies;
+            
+            // Persist the updated selection
+            browser.storage.local.set({ selectedCurrencies: uniqueCurrencies }).catch(error => {
+                console.error('Error persisting selected currencies:', error);
+            });
         },
 
         SET_BALANCES(state, balances) {
@@ -61,9 +64,15 @@ export default {
     },
 
     actions: {
-        async initialize({ dispatch }) {
+        async initialize({ dispatch, commit }) {
             await dispatch('fetchAvailableCurrencies');
-            await dispatch('loadPersistedState');
+            const persistedState = await dispatch('loadPersistedState');
+            
+            // If no currencies were loaded from persistent state, ensure default currency is set
+            if (!persistedState || !persistedState.selectedCurrencies || persistedState.selectedCurrencies.length === 0) {
+                commit('SET_SELECTED_CURRENCIES', [DEFAULT_CURRENCY]);
+            }
+            
             // Fetch balances after initialization
             await dispatch('fetchBalances');
         },
@@ -96,23 +105,20 @@ export default {
 
             commit('SET_LOADING', true);
             try {
+                // Always include DEFAULT_CURRENCY in the request
+                if (!state.selectedCurrencies.includes(DEFAULT_CURRENCY)) {
+                    commit('SET_SELECTED_CURRENCIES', [DEFAULT_CURRENCY]);
+                }
+                
                 const balances = await verusRPC.getAllCurrencyBalances(
                     rootState.wallet.address
                 );
-                console.log('Fetched balances:', balances);
-                commit('SET_BALANCES', balances);
-
-                // Save selected currencies to browser storage
-                try {
-                    await browser.storage.local.set({
-                        selectedCurrencies: state.selectedCurrencies
-                    });
-                } catch (error) {
-                    console.warn('Failed to save selected currencies:', error);
-                }
+                
+                commit('SET_BALANCES', balances || {});
             } catch (error) {
                 console.error('Failed to fetch balances:', error);
                 commit('SET_ERROR', 'Failed to fetch balances');
+                commit('SET_BALANCES', {});
             } finally {
                 commit('SET_LOADING', false);
             }
@@ -120,22 +126,16 @@ export default {
 
         async loadPersistedState({ commit }) {
             try {
-                const data = await browser.storage.local.get(['selectedCurrencies']);
-                if (data.selectedCurrencies && Array.isArray(data.selectedCurrencies)) {
-                    // Ensure VRSCTEST is always included
-                    const currencies = data.selectedCurrencies.includes(DEFAULT_CURRENCY)
-                        ? data.selectedCurrencies
-                        : [DEFAULT_CURRENCY, ...data.selectedCurrencies];
-                    commit('SET_SELECTED_CURRENCIES', currencies);
-                } else {
-                    // If no currencies are stored, set default currency
-                    commit('SET_SELECTED_CURRENCIES', [DEFAULT_CURRENCY]);
+                const result = await browser.storage.local.get(['selectedCurrencies']);
+                if (result.selectedCurrencies) {
+                    commit('SET_SELECTED_CURRENCIES', result.selectedCurrencies);
+                    return result;
                 }
             } catch (error) {
-                console.warn('Failed to load persisted state:', error);
-                // Set default currency if loading fails
-                commit('SET_SELECTED_CURRENCIES', [DEFAULT_CURRENCY]);
+                console.error('Error loading persisted state:', error);
+                commit('SET_ERROR', 'Failed to load saved currencies');
             }
+            return null;
         },
 
         async selectCurrency({ commit, dispatch, state }, currency) {
@@ -186,6 +186,13 @@ export default {
         getAvailableCurrencies: state => state.availableCurrencies,
         getSelectedCurrencies: state => state.selectedCurrencies,
         getBalance: state => currency => state.balances[currency] || 0,
+        getTotalBalance: state => {
+            let total = 0;
+            Object.values(state.balances).forEach(balance => {
+                total += parseFloat(balance) || 0;
+            });
+            return total;
+        },
         canAddMoreCurrencies: state => state.selectedCurrencies.length < MAX_CURRENCIES,
         getCurrencyDefinition: state => currency => state.currencyDefinitions[currency]
     }

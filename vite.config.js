@@ -28,7 +28,6 @@ export default defineConfig({
         description: 'A secure web wallet for Verus cryptocurrency',
         permissions: [
           'storage',
-          'tabs',
           'activeTab'
         ],
         host_permissions: [

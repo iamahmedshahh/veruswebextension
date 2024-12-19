@@ -13,6 +13,10 @@
         </div>
 
         <div v-else class="dashboard-content">
+            <div class="total-balance-section">
+                <h2>Total Balance</h2>
+                <div class="total-balance-amount">{{ formatBalance(totalBalance) }}</div>
+            </div>
             <div class="currency-cards">
                 <div 
                     v-for="currency in selectedCurrencies" 
@@ -203,6 +207,10 @@ export default {
         const isLoadingBalances = computed(() => store.state.currencies.loading);
         const canAddMoreCurrencies = computed(() => store.getters['currencies/canAddMoreCurrencies']);
 
+        const totalBalance = computed(() => {
+            return Object.values(balances.value).reduce((acc, balance) => acc + balance, 0);
+        });
+
         const getBalance = (currency) => {
             return balances.value[currency] || 0;
         };
@@ -350,6 +358,19 @@ export default {
             }
         });
 
+        onMounted(async () => {
+            if (address.value) {
+                await store.dispatch('currencies/fetchBalances');
+            }
+        });
+
+        // Watch for address changes to fetch balances
+        watch(address, async (newAddress) => {
+            if (newAddress) {
+                await store.dispatch('currencies/fetchBalances');
+            }
+        });
+
         return {
             walletLoading,
             walletError,
@@ -376,7 +397,8 @@ export default {
             handleReceive,
             executeSend,
             updateEstimatedFee,
-            receiveQrCode
+            receiveQrCode,
+            totalBalance
         };
     }
 };
@@ -440,6 +462,18 @@ export default {
     flex: 1;
     overflow-y: auto;
     padding: 1rem 0;
+}
+
+.total-balance-section {
+    margin-bottom: 1rem;
+    padding: 1rem;
+    background-color: #f5f5f5;
+    border-radius: 8px;
+}
+
+.total-balance-amount {
+    font-size: 1.5rem;
+    font-weight: 600;
 }
 
 .currency-cards {
