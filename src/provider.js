@@ -5,6 +5,7 @@
       this._connected = false;
       this._connecting = false;
       this._address = null;
+      this._balances = {};
       this._eventListeners = new Map();
       this._pendingRequests = new Map();
       this._connectPromise = null;
@@ -25,25 +26,32 @@
         
         const requestType = event.data.type.replace('_RESPONSE', '');
         const response = event.data.payload || {};
+        const requestId = response.requestId;
         
         // Handle state changes first
         this._handleResponse(requestType, response);
         
         // Then handle pending requests
-        const pendingRequest = this._pendingRequests.get(requestType);
-        if (pendingRequest) {
-          if (response.error) {
-            pendingRequest.reject(new Error(response.error));
-            this._pendingRequests.delete(requestType);
-          } else if (response.result) {
-            pendingRequest.resolve(response.result);
-            this._pendingRequests.delete(requestType);
-          } else if (response.status === 'awaitingApproval') {
-            // Don't resolve/reject for waiting status
-            console.log('[Verus Provider] Waiting for approval');
-          } else if (response.status === 'connected') {
-            pendingRequest.resolve({ address: response.address });
-            this._pendingRequests.delete(requestType);
+        if (requestId) {
+          const pendingRequest = this._pendingRequests.get(requestId);
+          if (pendingRequest) {
+            if (response.error) {
+              pendingRequest.reject(new Error(response.error));
+              this._pendingRequests.delete(requestId);
+            } else if (response.status === 'connected') {
+              pendingRequest.resolve({ address: response.address });
+              this._pendingRequests.delete(requestId);
+            } else if (response.status === 'awaitingApproval') {
+              // Don't resolve/reject for waiting status
+              console.log('[Verus Provider] Waiting for approval');
+              this._emit('waiting', { message: 'Awaiting connection approval' });
+            } else if (response.status === 'rejected') {
+              pendingRequest.reject(new Error('Connection rejected by user'));
+              this._pendingRequests.delete(requestId);
+            } else if (response.result?.connected) {
+              pendingRequest.resolve({ address: response.result.address });
+              this._pendingRequests.delete(requestId);
+            }
           }
         }
       });
@@ -55,10 +63,13 @@
       if (requestType === 'VERUS_CONNECT_REQUEST') {
         if (response.error) {
           // Only reset state if it's not a "wallet locked" error
-          if (response.error !== 'Wallet is locked') {
+          // and not awaiting approval
+          if (response.error !== 'Wallet is locked' && 
+              response.status !== 'awaitingApproval') {
             this._connecting = false;
             this._connected = false;
             this._address = null;
+            this._balances = {};
             this._emit('error', new Error(response.error));
           }
         } else if (response.status === 'awaitingApproval') {
@@ -68,13 +79,22 @@
         } else if (response.status === 'connected' || (response.result && response.result.connected)) {
           this._connected = true;
           this._connecting = false;
-          this._address = response.result?.address || response.address;
+          this._address = response.address || response.result?.address;
           
           console.log('[Verus Provider] Connected with address:', this._address);
           
           // Emit events
           this._emit('connect', { address: this._address });
           this._emit('accountsChanged', [this._address]);
+          
+          // Fetch initial balances
+          this._fetchBalances();
+        } else if (response.status === 'rejected') {
+          this._connecting = false;
+          this._connected = false;
+          this._address = null;
+          this._balances = {};
+          this._emit('error', new Error('Connection rejected by user'));
         }
       } else if (requestType === 'VERUS_CHECK_CONNECTION') {
         if (!response.error && response.connected) {
@@ -83,6 +103,18 @@
           console.log('[Verus Provider] Already connected:', this._address);
           this._emit('connect', { address: this._address });
           this._emit('accountsChanged', [this._address]);
+          
+          // Fetch initial balances for existing connection
+          this._fetchBalances();
+        }
+      } else if (requestType === 'VERUS_GET_BALANCES_REQUEST') {
+        if (!response.error && response.result) {
+          this._balances = response.result;
+          this._emit('balancesChanged', this._balances);
+        }
+      } else if (requestType === 'VERUS_GET_TOTAL_BALANCE_REQUEST') {
+        if (!response.error && response.result) {
+          this._emit('totalBalanceChanged', response.result);
         }
       }
     }
@@ -143,21 +175,25 @@
       
       if (this._connecting) {
         console.log('[Verus Provider] Already connecting...');
-        return new Promise((resolve, reject) => {
-          this._pendingRequests.set('VERUS_CONNECT_REQUEST', { resolve, reject });
-        });
+        return this._connectPromise;
       }
 
       this._connecting = true;
       console.log('[Verus Provider] Initiating new connection...');
       
+      // Generate unique request ID
+      const requestId = Math.random().toString(36).substring(7);
+      
       try {
-        return await new Promise((resolve, reject) => {
-          this._pendingRequests.set('VERUS_CONNECT_REQUEST', { resolve, reject });
+        this._connectPromise = new Promise((resolve, reject) => {
+          this._pendingRequests.set(requestId, { resolve, reject });
           window.postMessage({
-            type: 'VERUS_CONNECT_REQUEST'
+            type: 'VERUS_CONNECT_REQUEST',
+            requestId
           }, '*');
         });
+        
+        return await this._connectPromise;
       } catch (error) {
         // Only reset state if it's not waiting for approval
         if (!error.message.includes('Awaiting approval')) {
@@ -166,21 +202,57 @@
           this._address = null;
         }
         throw error;
+      } finally {
+        this._connectPromise = null;
       }
     }
 
-    async getBalance(currency = 'VRSCTEST') {
-      if (!this._connected) {
-        throw new Error('Not connected');
-      }
-
-      return new Promise((resolve, reject) => {
-        this._pendingRequests.set('VERUS_GET_BALANCE_REQUEST', { resolve, reject });
+    async _fetchBalances() {
+      try {
         window.postMessage({
-          type: 'VERUS_GET_BALANCE_REQUEST',
-          currency
+          type: 'VERUS_GET_BALANCES_REQUEST'
         }, '*');
-      });
+      } catch (error) {
+        console.error('[Verus Provider] Error fetching balances:', error);
+      }
+    }
+
+    async getAllBalances() {
+      console.log('[Verus Provider] Getting all balances');
+      const response = await this._sendMessage('VERUS_GET_BALANCES_REQUEST');
+      return response;
+    }
+
+    async getTotalBalance() {
+      console.log('[Verus Provider] Getting total balance');
+      const response = await this._sendMessage('VERUS_GET_TOTAL_BALANCE_REQUEST');
+      return response;
+    }
+
+    async _sendMessage(messageType) {
+      try {
+        const requestId = Math.random().toString(36).substring(7);
+        const response = await new Promise((resolve, reject) => {
+          const responseHandler = (event) => {
+            if (event.source !== window) return;
+            if (!event.data.type || !event.data.type.endsWith('_RESPONSE')) return;
+            if (event.data.payload?.requestId !== requestId) return;
+            
+            window.removeEventListener('message', responseHandler);
+            resolve(event.data.payload);
+          };
+          
+          window.addEventListener('message', responseHandler);
+          window.postMessage({
+            type: messageType,
+            requestId
+          }, '*');
+        });
+        return response;
+      } catch (error) {
+        console.error('[Verus Provider] Error sending message:', error);
+        throw error;
+      }
     }
   }
 

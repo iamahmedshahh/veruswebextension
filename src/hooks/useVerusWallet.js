@@ -1,30 +1,174 @@
-import { ref, onMounted } from 'vue';
+import { ref, onMounted, onUnmounted } from 'vue';
 
 export function useVerusWallet() {
     const address = ref(null);
     const isConnected = ref(false);
     const error = ref(null);
-    const balance = ref(null);
+    const balances = ref({});
+    const totalBalance = ref('0');
     const isConnecting = ref(false);
+    const chainId = ref(null);
+    let provider = null;
 
-    // Check if Verus wallet is installed
+    // Initialize provider
+    const initProvider = () => {
+        provider = window.verus || window.verusWallet;
+        if (!provider) {
+            throw new Error('Verus Wallet extension not installed');
+        }
+        return provider;
+    };
+
+    // Check if wallet is installed
     const checkWalletInstalled = () => {
-        return window.verus?.isVerusWalletInstalled === true || window.verus?.verusWallet === true;
+        try {
+            return !!initProvider();
+        } catch (err) {
+            console.error('[Verus] Wallet not installed:', err);
+            return false;
+        }
+    };
+
+    // Event handlers
+    const handleAccountsChanged = (accounts) => {
+        console.log('[Verus] Accounts changed:', accounts);
+        if (accounts && accounts.length > 0 && accounts[0]) {
+            address.value = accounts[0];
+            isConnected.value = true;
+            getAllBalances().catch(console.error);
+        } else {
+            address.value = null;
+            isConnected.value = false;
+            balances.value = {};
+        }
+    };
+
+    const handleConnect = (connectInfo) => {
+        console.log('[Verus] Connected:', connectInfo);
+        if (connectInfo?.address) {
+            address.value = connectInfo.address;
+            chainId.value = connectInfo.chainId;
+            isConnected.value = true;
+            getAllBalances().catch(console.error);
+        }
+    };
+
+    const handleDisconnect = () => {
+        console.log('[Verus] Disconnected');
+        address.value = null;
+        isConnected.value = false;
+        chainId.value = null;
+        balances.value = {};
+    };
+
+    const handleError = (err) => {
+        console.error('[Verus] Provider error:', err);
+        error.value = err.message;
+    };
+
+    const handleBalancesChanged = (newBalances) => {
+        console.log('[Verus] Balances changed:', newBalances);
+        if (newBalances && typeof newBalances === 'object') {
+            balances.value = newBalances.balances || {};
+        }
+    };
+
+    // Set up event listeners
+    const setupEventListeners = (provider) => {
+        provider.on('accountsChanged', handleAccountsChanged);
+        provider.on('connect', handleConnect);
+        provider.on('disconnect', handleDisconnect);
+        provider.on('error', handleError);
+        provider.on('balancesChanged', handleBalancesChanged);
+    };
+
+    // Remove event listeners
+    const removeEventListeners = (provider) => {
+        provider.off('accountsChanged', handleAccountsChanged);
+        provider.off('connect', handleConnect);
+        provider.off('disconnect', handleDisconnect);
+        provider.off('error', handleError);
+        provider.off('balancesChanged', handleBalancesChanged);
+    };
+
+    // Get all balances
+    const getAllBalances = async () => {
+        try {
+            const provider = initProvider();
+            if (!address.value) {
+                throw new Error('Not connected. Please connect first.');
+            }
+
+            console.log('[Verus] Getting all balances');
+            const result = await provider.getAllBalances();
+            console.log('[Verus] Balances result:', result);
+            
+            if (result && typeof result === 'object') {
+                balances.value = result.balances || {};
+            }
+
+            // Get total balance
+            const totalResult = await provider.getTotalBalance();
+            if (totalResult && totalResult.totalBalance) {
+                totalBalance.value = totalResult.totalBalance;
+            }
+
+            return balances.value;
+        } catch (err) {
+            console.error('[Verus] Failed to get balances:', err);
+            error.value = err.message;
+            throw err;
+        }
+    };
+
+    // Get total balance
+    const getTotalBalance = async () => {
+        try {
+            const provider = initProvider();
+            if (!address.value) {
+                throw new Error('Not connected. Please connect first.');
+            }
+
+            console.log('[Verus] Getting total balance');
+            const result = await provider.getTotalBalance();
+            console.log('[Verus] Total balance result:', result);
+            
+            if (result) {
+                if (result.totalBalance) {
+                    totalBalance.value = result.totalBalance;
+                }
+                if (result.balances) {
+                    balances.value = result.balances;
+                }
+            }
+            return totalBalance.value;
+        } catch (err) {
+            console.error('[Verus] Failed to get total balance:', err);
+            error.value = err.message;
+            throw err;
+        }
     };
 
     // Get balance for a specific currency
     const getBalance = async (currency = 'VRSCTEST') => {
         try {
-            if (!isConnected.value || !address.value) {
+            const provider = initProvider();
+            if (!address.value) {
                 throw new Error('Not connected. Please connect first.');
             }
 
-            console.log('Getting balance for currency:', currency);
-            const result = await window.verus.getBalance(currency);
+            console.log('[Verus] Getting balance for currency:', currency);
+            const result = await provider.getBalance(currency);
+            console.log('[Verus] Balance result:', result);
+            
             if (result?.balance) {
-                balance.value = result.balance;
+                balances.value = { 
+                    ...balances.value, 
+                    [currency]: result.balance 
+                };
+                return result.balance;
             }
-            return result;
+            return '0';
         } catch (err) {
             console.error('[Verus] Failed to get balance:', err);
             error.value = err.message;
@@ -35,7 +179,9 @@ export function useVerusWallet() {
     // Connect to wallet
     const connectWallet = async () => {
         try {
-            console.log('[Verus] Checking wallet provider:', window.verus);
+            const provider = initProvider();
+            console.log('[Verus] Checking wallet provider:', provider);
+            
             if (!checkWalletInstalled()) {
                 throw new Error('Verus Wallet extension not installed');
             }
@@ -46,126 +192,93 @@ export function useVerusWallet() {
             }
 
             isConnecting.value = true;
-
-            // Use connect() first as it handles the connection flow
-            console.log('[Verus] Attempting to connect...');
-            const connectResult = await window.verus.connect();
-            console.log('[Verus] Connect result:', connectResult);
-
-            if (!connectResult?.address) {
-                throw new Error('Connection failed: No address returned');
-            }
-
-            address.value = connectResult.address;
-            isConnected.value = true;
             error.value = null;
-            
-            try {
-                await getBalance();
-            } catch (balanceError) {
-                console.error('Failed to get initial balance:', balanceError);
+
+            // Check if already connected
+            if (provider.isConnected()) {
+                const accounts = await provider.getAccounts();
+                console.log('[Verus] Already connected accounts:', accounts);
+                if (accounts && accounts.length > 0 && accounts[0]) {
+                    address.value = accounts[0];
+                    isConnected.value = true;
+                    await getAllBalances();
+                    return accounts[0];
+                }
             }
 
-            return connectResult.address;
+            // Attempt connection
+            console.log('[Verus] Initiating connection...');
+            const result = await provider.connect();
+            console.log('[Verus] Connection result:', result);
+            
+            if (result?.address) {
+                address.value = result.address;
+                chainId.value = result.chainId;
+                isConnected.value = true;
+                await getAllBalances();
+                return result.address;
+            } else {
+                throw new Error('No address received after connection');
+            }
         } catch (err) {
-            error.value = err.message;
-            isConnected.value = false;
+            console.error('[Verus] Connection error:', err);
+            if (err.message.includes('Awaiting approval')) {
+                error.value = 'Please approve the connection request in your wallet';
+            } else if (err.message.includes('rejected')) {
+                error.value = 'Connection rejected by user';
+            } else {
+                error.value = err.message;
+            }
             throw err;
         } finally {
             isConnecting.value = false;
         }
     };
 
-    // Get current account
-    const getAccount = async () => {
+    // Disconnect wallet
+    const disconnectWallet = async () => {
         try {
-            if (!checkWalletInstalled()) {
-                throw new Error('Verus Wallet extension not installed');
-            }
-
-            const accounts = await window.verus.getAccounts();
-            if (!accounts || accounts.length === 0) {
-                isConnected.value = false;
-                address.value = null;
-                throw new Error('No accounts found');
-            }
-
-            address.value = accounts[0];
-            isConnected.value = window.verus.isConnected();
-            return accounts[0];
-        } catch (err) {
-            error.value = err.message;
+            const provider = initProvider();
+            await provider.disconnect();
+            address.value = null;
             isConnected.value = false;
+            chainId.value = null;
+            balances.value = {};
+            error.value = null;
+        } catch (err) {
+            console.error('[Verus] Disconnect error:', err);
+            error.value = err.message;
             throw err;
         }
     };
 
-    // Initialize wallet state
-    const initWallet = async () => {
-        if (!checkWalletInstalled()) return;
-
+    // Lifecycle hooks
+    onMounted(() => {
         try {
-            const accounts = await window.verus.getAccounts();
-            if (accounts && accounts.length > 0) {
-                address.value = accounts[0];
-                isConnected.value = window.verus.isConnected();
-                if (isConnected.value) {
-                    try {
-                        await getBalance();
-                    } catch (err) {
-                        console.error('Failed to get initial balance:', err);
+            const provider = initProvider();
+            setupEventListeners(provider);
+            
+            // Check initial connection
+            if (provider.isConnected()) {
+                provider.getAccounts().then(accounts => {
+                    if (accounts && accounts.length > 0 && accounts[0]) {
+                        address.value = accounts[0];
+                        isConnected.value = true;
+                        getAllBalances().catch(console.error);
                     }
-                }
+                }).catch(console.error);
             }
         } catch (err) {
-            console.error('Failed to initialize wallet:', err);
-            isConnected.value = false;
+            console.error('[Verus] Failed to initialize:', err);
         }
-    };
+    });
 
-    // Listen for wallet events
-    onMounted(() => {
-        if (checkWalletInstalled()) {
-            // Initialize wallet state
-            initWallet();
-
-            // Listen for account changes
-            window.verus.on('accountsChanged', async (accounts) => {
-                console.log('Accounts changed:', accounts);
-                if (accounts && accounts.length > 0) {
-                    address.value = accounts[0];
-                    isConnected.value = window.verus.isConnected();
-                    try {
-                        await getBalance();
-                    } catch (err) {
-                        console.error('Failed to get balance after account change:', err);
-                    }
-                } else {
-                    address.value = null;
-                    isConnected.value = false;
-                    balance.value = null;
-                }
-            });
-
-            // Listen for disconnect events
-            window.verus.on('disconnect', () => {
-                console.log('Wallet disconnected');
-                address.value = null;
-                isConnected.value = false;
-                balance.value = null;
-                error.value = null;
-            });
-
-            // Listen for connect events
-            window.verus.on('connect', (connectInfo) => {
-                console.log('Wallet connected:', connectInfo);
-                if (connectInfo?.address) {
-                    address.value = connectInfo.address;
-                    isConnected.value = true;
-                    error.value = null;
-                    getBalance().catch(console.error);
-                }
-            });
+    onUnmounted(() => {
+        try {
+            const provider = initProvider();
+            removeEventListeners(provider);
+        } catch (err) {
+            console.error('[Verus] Failed to cleanup:', err);
         }
     });
 
@@ -174,10 +287,14 @@ export function useVerusWallet() {
         isConnected,
         isConnecting,
         error,
-        balance,
+        balances,
+        totalBalance,
+        chainId,
         connectWallet,
-        getAccount,
+        disconnectWallet,
+        getAllBalances,
         getBalance,
+        getTotalBalance,
         checkWalletInstalled
     };
 }
