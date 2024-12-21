@@ -1,6 +1,5 @@
 import { WalletService } from '../../services/WalletService';
-import { verusRPC } from '../../services/VerusRPCService';
-import browser from 'webextension-polyfill';
+import { VerusRPCService } from '../../services/VerusRPCService';
 import storage from '../services/StorageService';
 
 // Initial state
@@ -36,7 +35,7 @@ const getters = {
 const actions = {
     async initializeRPC({ commit }) {
         try {
-            await verusRPC.initialize();
+            await VerusRPCService.initialize();
         } catch (error) {
             commit('setError', 'Failed to initialize Verus RPC: ' + error.message);
             throw error;
@@ -55,7 +54,7 @@ const actions = {
             const wallet = await WalletService.generateWallet(mnemonic, password);
             
             // Store wallet data and password hash
-            await browser.storage.local.set({
+            await storage.set({
                 wallet,
                 hasWallet: true,
                 isLoggedIn: true,
@@ -94,7 +93,7 @@ const actions = {
             const walletData = await WalletService.recoverFromMnemonic(mnemonic, password);
             
             // Store wallet data and password hash
-            await browser.storage.local.set({
+            await storage.set({
                 wallet: walletData,
                 hasWallet: true,
                 isLoggedIn: true,
@@ -123,7 +122,7 @@ const actions = {
     
     async getBalance({ commit }, address) {
         try {
-            const balance = await verusRPC.getBalance(address);
+            const balance = await VerusRPCService.getBalance(address);
             commit('setBalance', balance);
             return balance;
         } catch (error) {
@@ -150,7 +149,7 @@ const actions = {
             commit('setLoading', true);
             
             // Get stored wallet data
-            const data = await browser.storage.local.get(['wallet', 'hasWallet', 'isLoggedIn']);
+            const data = await storage.get(['wallet', 'hasWallet', 'isLoggedIn']);
             
             if (!data.wallet || !data.hasWallet) {
                 commit('setHasWallet', false);
@@ -204,7 +203,7 @@ const actions = {
                 walletState: storedState, 
                 isLoggedIn,
                 lastLoginTime 
-            } = await browser.storage.local.get([
+            } = await storage.get([
                 'wallet',
                 'walletState',
                 'isLoggedIn',
@@ -216,8 +215,8 @@ const actions = {
             
             if (loginExpired) {
                 console.log('Login expired, clearing session...');
-                await browser.storage.session.clear();
-                await browser.storage.local.remove(['isLoggedIn', 'walletState', 'lastLoginTime']);
+                await storage.session.clear();
+                await storage.remove(['isLoggedIn', 'walletState', 'lastLoginTime']);
                 commit('setLoggedIn', false);
                 commit('setLocked', true);
             } else if (storedState) {
@@ -253,7 +252,7 @@ const actions = {
             commit('setLoading', true);
             
             // Get stored wallet data
-            const { wallet } = await browser.storage.local.get(['wallet']);
+            const { wallet } = await storage.get(['wallet']);
             if (!wallet || !wallet.address) {
                 throw new Error('No wallet found');
             }
@@ -271,7 +270,7 @@ const actions = {
             commit('setLocked', false);
             
             // Store login state
-            await browser.storage.local.set({
+            await storage.set({
                 walletState: {
                     isLocked: false,
                     isLoggedIn: true,
@@ -305,7 +304,7 @@ const actions = {
             commit('setLoggedIn', false);
             
             // Store locked state but keep wallet data
-            await browser.storage.local.set({
+            await storage.set({
                 walletState: {
                     isLocked: true,
                     isLoggedIn: false,
@@ -333,7 +332,7 @@ const actions = {
             commit('clearWalletData');
             
             // Clear storage
-            await browser.storage.local.remove(['walletState']);
+            await storage.remove(['walletState']);
             
             console.log('Logged out');
             
@@ -349,7 +348,7 @@ const actions = {
     async unlock({ commit, dispatch, rootGetters }, password) {
         try {
             // Get the stored wallet data
-            const { wallet } = await browser.storage.local.get('wallet');
+            const { wallet } = await storage.get('wallet');
             if (!wallet) {
                 throw new Error('No wallet found');
             }
@@ -361,7 +360,7 @@ const actions = {
             }
             
             // Update wallet state
-            await browser.storage.local.set({ 
+            await storage.set({ 
                 walletState: {
                     isLocked: false,
                     address: wallet.address
@@ -369,7 +368,7 @@ const actions = {
             });
             
             // Update session state
-            await browser.storage.session.set({ isLoggedIn: true });
+            await storage.session.set({ isLoggedIn: true });
             
             // Update store state
             commit('setLoggedIn', true);
@@ -383,18 +382,18 @@ const actions = {
         }
     },
     
-    async verifyPassword({ commit, dispatch, rootGetters }, password) {
+    async verifyPassword({ commit }, password) {
         try {
             commit('clearError');
             
             // Get stored wallet data
-            const data = await browser.storage.local.get('wallet');
-            if (!data.wallet) {
+            const { wallet } = await storage.get('wallet');
+            if (!wallet || !wallet.hashedPassword) {
                 throw new Error('No wallet found');
             }
             
             // Verify password
-            const isValid = await WalletService.verifyPassword(password, data.wallet.hashedPassword);
+            const isValid = await WalletService.verifyPassword(password, wallet.hashedPassword);
             if (!isValid) {
                 throw new Error('Invalid password');
             }
@@ -416,7 +415,7 @@ const actions = {
             commit('SET_LOADING_BALANCES', true);
             
             // Get all currency balances
-            const allBalances = await verusRPC.getAllCurrencyBalances(state.address);
+            const allBalances = await VerusRPCService.getAllCurrencyBalances(state.address);
             console.log('All balances:', allBalances);
             
             // Set balances in store
@@ -444,7 +443,7 @@ const actions = {
     
     async getConnectedSites({ commit }) {
         try {
-            const sites = await browser.storage.local.get('connectedSites')
+            const sites = await storage.get('connectedSites')
             commit('SET_CONNECTED_SITES', sites.connectedSites || [])
             return sites.connectedSites || []
         } catch (error) {
@@ -455,9 +454,9 @@ const actions = {
 
     async disconnectSite({ commit, dispatch }, origin) {
         try {
-            const sites = await browser.storage.local.get('connectedSites')
+            const sites = await storage.get('connectedSites')
             const updatedSites = (sites.connectedSites || []).filter(site => site.origin !== origin)
-            await browser.storage.local.set({ connectedSites: updatedSites })
+            await storage.set({ connectedSites: updatedSites })
             commit('SET_CONNECTED_SITES', updatedSites)
             
             // Notify content script to remove connection
@@ -476,13 +475,13 @@ const actions = {
 
     async addConnectedSite({ commit, state }, { origin, favicon }) {
         try {
-            const sites = await browser.storage.local.get('connectedSites')
+            const sites = await storage.get('connectedSites')
             const existingSites = sites.connectedSites || []
             
             // Don't add if already exists
             if (!existingSites.some(site => site.origin === origin)) {
                 const updatedSites = [...existingSites, { origin, favicon, connectedAt: Date.now() }]
-                await browser.storage.local.set({ connectedSites: updatedSites })
+                await storage.set({ connectedSites: updatedSites })
                 commit('SET_CONNECTED_SITES', updatedSites)
             }
         } catch (error) {
@@ -501,7 +500,7 @@ const actions = {
             }
             
             // If not in state, try to get it from storage
-            const data = await browser.storage.local.get('wallet');
+            const data = await storage.get('wallet');
             if (!data.wallet || !data.wallet.privateKeyWIF) {
                 throw new Error('Private key not found in wallet');
             }
