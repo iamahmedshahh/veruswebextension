@@ -1,12 +1,19 @@
 <script setup>
-import { ref } from 'vue'
+import { ref, computed, defineProps } from 'vue'
+
+const props = defineProps({
+  currency: {
+    type: String,
+    required: true
+  }
+})
 
 // Mock data - will be replaced with real transactions later
 const transactions = ref([
   {
     id: 1,
     type: 'received',
-    amount: '100 VRSCTEST',
+    amount: `100 ${props.currency}`,
     from: 'tX...abc',
     to: 'tV...xyz',
     timestamp: '2024-01-20 10:30',
@@ -15,20 +22,23 @@ const transactions = ref([
   {
     id: 2,
     type: 'sent',
-    amount: '50 VRSCTEST',
+    amount: `50 ${props.currency}`,
     from: 'tV...xyz',
     to: 'tA...123',
     timestamp: '2024-01-19 15:45',
     status: 'confirmed'
   }
 ])
+
+// Later this will be connected to real transaction data from your store
+const filteredTransactions = computed(() => transactions.value)
 </script>
 
 <template>
   <div class="history-container">
     <h3 class="history-title">Recent Transactions</h3>
     <div class="transactions-list">
-      <div v-for="tx in transactions" :key="tx.id" class="transaction-item">
+      <div v-for="tx in filteredTransactions" :key="tx.id" class="transaction-item">
         <div class="tx-icon" :class="tx.type">
           {{ tx.type === 'received' ? '↓' : '↑' }}
         </div>

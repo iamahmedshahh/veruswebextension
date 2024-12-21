@@ -5,27 +5,21 @@ import storage from '../services/StorageService';
 
 // Initial state
 const state = {
-    address: null,
-    network: null,
-    isInitialized: false,
-    error: null,
-    loading: false,
-    balance: null,
-    seedConfirmed: false,
     isLoggedIn: false,
+    isLocked: true,
     hasWallet: false,
-    isLoadingBalances: false,
+    address: null,
+    network: 'testnet',
     balances: {},
     selectedCurrencies: ['VRSCTEST'],
-    isLocked: false,
     connectedSites: [],
-    privateKeyWIF: null, // Add private key in WIF format to state
-    mnemonic: null // Store mnemonic phrase in state
+    error: null,
+    loading: false
 };
 
 // Getters
 const getters = {
-    isWalletInitialized: state => state.isInitialized,
+    isWalletInitialized: state => state.initialized,
     currentAddress: state => state.address,
     currentNetwork: state => state.network,
     hasError: state => !!state.error,
@@ -200,30 +194,101 @@ const actions = {
         }
     },
     
+    async initializeState({ commit }) {
+        try {
+            console.log('Initializing wallet state...');
+            
+            // Get stored wallet data
+            const { 
+                wallet, 
+                walletState: storedState, 
+                isLoggedIn,
+                lastLoginTime 
+            } = await browser.storage.local.get([
+                'wallet',
+                'walletState',
+                'isLoggedIn',
+                'lastLoginTime'
+            ]);
+            
+            // Check if login has expired (24 hours)
+            const loginExpired = !lastLoginTime || (Date.now() - lastLoginTime) > 24 * 60 * 60 * 1000;
+            
+            if (loginExpired) {
+                console.log('Login expired, clearing session...');
+                await browser.storage.session.clear();
+                await browser.storage.local.remove(['isLoggedIn', 'walletState', 'lastLoginTime']);
+                commit('setLoggedIn', false);
+                commit('setLocked', true);
+            } else if (storedState) {
+                commit('setLocked', storedState.isLocked);
+                commit('setLoggedIn', !!isLoggedIn);
+                if (wallet) {
+                    commit('setAddress', wallet.address);
+                    commit('setNetwork', wallet.network);
+                }
+            }
+            
+            // Set hasWallet if wallet exists
+            commit('setHasWallet', !!wallet);
+            
+            // Mark as initialized
+            commit('setInitialized', true);
+            
+            console.log('Wallet state initialized:', {
+                hasWallet: !!wallet,
+                isLoggedIn: state.isLoggedIn,
+                isLocked: state.isLocked
+            });
+        } catch (error) {
+            console.error('Failed to initialize state:', error);
+            commit('setError', error.message);
+        }
+    },
+    
     async login({ commit, dispatch }, password) {
         try {
+            console.log('Logging in...');
             commit('clearError');
             commit('setLoading', true);
+            
+            // Get stored wallet data
+            const { wallet } = await browser.storage.local.get(['wallet']);
+            if (!wallet || !wallet.address) {
+                throw new Error('No wallet found');
+            }
             
             // Verify password
             await dispatch('verifyPassword', password);
             
+            // Set wallet data
+            commit('setAddress', wallet.address);
+            commit('setNetwork', wallet.network || 'testnet');
+            commit('setHasWallet', true);
+            
             // Set login state
-            await browser.storage.local.set({ 
-                isLoggedIn: true,
-                lastLoginTime: Date.now()
+            commit('setLoggedIn', true);
+            commit('setLocked', false);
+            
+            // Store login state
+            await browser.storage.local.set({
+                walletState: {
+                    isLocked: false,
+                    isLoggedIn: true,
+                    address: wallet.address,
+                    network: wallet.network || 'testnet'
+                }
             });
             
-            // Update store state
-            commit('setLoggedIn', true);
-            commit('setInitialized', true);
-            commit('setSeedConfirmed', true);
-            
-            // Load wallet data and initialize currencies
+            // Load wallet data
             await dispatch('loadWallet');
             
+            console.log('Login successful');
+            
+            // Go to dashboard
+            window.location.hash = '#/';
         } catch (error) {
-            console.error('Login error:', error);
+            console.error('Login failed:', error);
             commit('setError', error.message);
             throw error;
         } finally {
@@ -231,63 +296,51 @@ const actions = {
         }
     },
     
-    async logout({ commit }) {
+    async lock({ commit, state }) {
         try {
-            console.log('Logging out...');
-            // Clear sensitive wallet data from storage, but keep hasWallet flag
-            await browser.storage.local.remove([
-                'isLoggedIn',
-                'passwordHash',
-                'walletState',
-                'lastLoginTime'
-            ]);
-            console.log('Local storage cleared');
+            console.log('Locking wallet...');
             
-            // Clear session storage
-            await browser.storage.session.clear();
-            console.log('Session storage cleared');
-            
-            // Clear store state but keep hasWallet true
-            commit('clearLoginData');
-            commit('setLoggedIn', false);
+            // Keep wallet data but set locked state
             commit('setLocked', true);
-            console.log('Store state cleared');
+            commit('setLoggedIn', false);
             
-            // Force reload to reset app state
-            console.log('Reloading page...');
-            window.location.reload();
+            // Store locked state but keep wallet data
+            await browser.storage.local.set({
+                walletState: {
+                    isLocked: true,
+                    isLoggedIn: false,
+                    address: state.address,
+                    network: state.network
+                }
+            });
+            
+            console.log('Wallet locked');
+            
+            // Go to login
+            window.location.hash = '#/login';
         } catch (error) {
-            console.error('Failed to logout:', error);
+            console.error('Failed to lock wallet:', error);
             commit('setError', error.message);
             throw error;
         }
     },
     
-    async lock({ commit, dispatch }) {
+    async logout({ commit }) {
         try {
-            console.log('Locking wallet...');
-            // Update wallet state in storage
-            await browser.storage.local.set({ 
-                walletState: {
-                    isLocked: true
-                }
-            });
-            console.log('Wallet state updated');
+            console.log('Logging out...');
             
-            // Clear session state
-            await browser.storage.session.clear();
-            console.log('Session cleared');
+            // Clear all wallet data
+            commit('clearWalletData');
             
-            // Update store state
-            commit('setLoggedIn', false);
-            commit('setLocked', true);
-            commit('clearLoginData');
-            console.log('Store state updated');
+            // Clear storage
+            await browser.storage.local.remove(['walletState']);
             
-            // Reload page to reset app state
-            window.location.reload();
+            console.log('Logged out');
+            
+            // Go to login
+            window.location.hash = '#/login';
         } catch (error) {
-            console.error('Failed to lock wallet:', error);
+            console.error('Logout failed:', error);
             commit('setError', error.message);
             throw error;
         }
@@ -472,120 +525,96 @@ const actions = {
 
 // Mutations
 const mutations = {
-    setWalletData(state, { address, network, privateKeyWIF, mnemonic }) {
-        state.address = address;
-        state.network = network;
-        state.privateKeyWIF = privateKeyWIF;
-        state.mnemonic = mnemonic;
-    },
-
-    clearWalletData(state) {
-        console.log('Clearing wallet data from store...');
-        state.address = null;
-        state.network = null;
-        state.privateKeyWIF = null;
-        state.mnemonic = null;
-        state.hasWallet = false;
-        state.isInitialized = false;
-        state.isLoggedIn = false;
-        state.seedConfirmed = false;
-        state.isLocked = true;
-        state.balance = null;
-        state.balances = {};
-        state.error = null;
-        state.loading = false;
-        state.isLoadingBalances = false;
-        state.connectedSites = [];
-        console.log('Store state after clear:', state);
-    },
-
-    clearLoginData(state) {
-        console.log('Clearing login data...');
-        state.address = null;
-        state.network = null;
-        state.privateKeyWIF = null;
-        state.mnemonic = null;
-        state.isInitialized = false;
-        state.isLoggedIn = false;
-        state.seedConfirmed = false;
-        state.balance = null;
-        state.balances = {};
-        state.error = null;
-        state.loading = false;
-        state.isLoadingBalances = false;
-        state.connectedSites = [];
-        // Keep hasWallet true
-        console.log('Login data cleared');
-    },
-
-    setError(state, error) {
-        state.error = error;
-    },
-
-    clearError(state) {
-        state.error = null;
-    },
-
-    setLoading(state, loading) {
-        state.loading = loading;
-    },
-
-    setBalance(state, balance) {
-        state.balance = balance;
-    },
-
-    setSeedConfirmed(state, confirmed) {
-        state.seedConfirmed = confirmed;
-    },
-
     setInitialized(state, initialized) {
-        state.isInitialized = initialized;
+        state.initialized = initialized;
     },
-
+    
+    setAddress(state, address) {
+        state.address = address;
+    },
+    
+    setNetwork(state, network) {
+        state.network = network;
+    },
+    
     setLoggedIn(state, isLoggedIn) {
+        console.log('Setting logged in state to:', isLoggedIn);
         state.isLoggedIn = isLoggedIn;
     },
-
+    
+    setLocked(state, isLocked) {
+        console.log('Setting locked state to:', isLocked);
+        state.isLocked = isLocked;
+    },
+    
     setHasWallet(state, hasWallet) {
         state.hasWallet = hasWallet;
     },
-
+    
+    clearWalletData(state) {
+        state.address = null;
+        state.network = 'testnet';
+        state.balances = {};
+        state.selectedCurrencies = ['VRSCTEST'];
+        state.connectedSites = [];
+    },
+    
+    clearLoginData(state) {
+        state.isLoggedIn = false;
+        state.isLocked = true;
+    },
+    
+    setError(state, error) {
+        state.error = error;
+    },
+    
+    clearError(state) {
+        state.error = null;
+    },
+    
+    setLoading(state, loading) {
+        state.loading = loading;
+    },
+    
+    setBalance(state, balance) {
+        state.balance = balance;
+    },
+    
+    setSeedConfirmed(state, confirmed) {
+        state.seedConfirmed = confirmed;
+    },
+    
     SET_LOADING_BALANCES(state, loading) {
         state.isLoadingBalances = loading;
     },
-
+    
     SET_BALANCES(state, balances) {
         state.balances = balances;
     },
-
+    
     ADD_CURRENCY(state, currency) {
         if (!state.selectedCurrencies.includes(currency)) {
             state.selectedCurrencies.push(currency);
         }
     },
-
+    
     REMOVE_CURRENCY(state, currency) {
         const index = state.selectedCurrencies.indexOf(currency);
         if (index !== -1) {
             state.selectedCurrencies.splice(index, 1);
         }
     },
-
+    
     SET_SELECTED_CURRENCIES(state, currencies) {
         state.selectedCurrencies = currencies;
     },
-
+    
     SET_CONNECTED_SITES(state, sites) {
         state.connectedSites = sites
     },
-
+    
     REMOVE_CONNECTED_SITE(state, origin) {
         state.connectedSites = state.connectedSites.filter(site => site.origin !== origin)
-    },
-    
-    setLocked(state, isLocked) {
-        console.log('Setting locked state to:', isLocked);
-        state.isLocked = isLocked;
     },
 };
 

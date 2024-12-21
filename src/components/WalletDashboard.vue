@@ -23,44 +23,46 @@
                     :key="currency" 
                     class="currency-card"
                 >
-                    <div class="card-header">
-                        <h3>{{ currency }}</h3>
-                        <button 
-                            class="remove-currency" 
-                            @click="removeCurrency(currency)"
-                            v-if="currency !== 'VRSCTEST'"
-                        >
-                            &times;
-                        </button>
-                    </div>
-                    <div class="balance-section">
-                        <div class="balance">
-                            <span class="balance-label">Balance:</span>
-                            <span class="balance-amount">{{ formatBalance(getBalance(currency)) }}</span>
+                    <div class="card-content" @click="$router.push(`/currency/${currency}`)">
+                        <div class="card-header">
+                            <h3>{{ currency }}</h3>
+                            <button 
+                                class="remove-currency" 
+                                @click.stop="removeCurrency(currency)"
+                                v-if="currency !== 'VRSCTEST'"
+                            >
+                                &times;
+                            </button>
                         </div>
-                        <div class="address-section">
-                            <span class="address-label">Address:</span>
-                            <div class="address-value">
-                                <span class="address">{{ address }}</span>
-                                <button 
-                                    class="copy-button"
-                                    @click="copyToClipboard(address)"
-                                    title="Copy address"
-                                >
-                                    📋
-                                </button>
+                        <div class="balance-section">
+                            <div class="balance">
+                                <span class="balance-label">Balance:</span>
+                                <span class="balance-amount">{{ formatBalance(getBalance(currency)) }}</span>
+                            </div>
+                            <div class="address-section">
+                                <span class="address-label">Address:</span>
+                                <div class="address-value">
+                                    <span class="address">{{ address }}</span>
+                                    <button 
+                                        class="copy-button"
+                                        @click.stop="copyToClipboard(address)"
+                                        title="Copy address"
+                                    >
+                                        📋
+                                    </button>
+                                </div>
                             </div>
                         </div>
-                        <div class="action-buttons">
-                            <button class="action-btn send" @click="handleSend(currency)">
-                                <i class="fas fa-arrow-up"></i>
-                                Send
-                            </button>
-                            <button class="action-btn receive" @click="handleReceive(currency)">
-                                <i class="fas fa-arrow-down"></i>
-                                Receive
-                            </button>
-                        </div>
+                    </div>
+                    <div class="action-buttons">
+                        <button class="action-btn send" @click.stop="handleSend(currency)">
+                            <i class="fas fa-arrow-up"></i>
+                            Send
+                        </button>
+                        <button class="action-btn receive" @click.stop="handleReceive(currency)">
+                            <i class="fas fa-arrow-down"></i>
+                            Receive
+                        </button>
                     </div>
                 </div>
 
@@ -487,6 +489,10 @@ export default {
     border: 1px solid var(--border-color);
     border-radius: 0.5rem;
     padding: 1rem;
+}
+
+.card-content {
+    cursor: pointer;
 }
 
 .card-header {

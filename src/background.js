@@ -60,7 +60,26 @@ async function initializeState() {
     console.log('RPC connection status:', isConnected ? 'Connected' : 'Failed to connect');
     
     // Load wallet state
-    const { walletState: storedState, wallet } = await browser.storage.local.get(['walletState', 'wallet']);
+    const { walletState: storedState, wallet, lastLoginTime } = await browser.storage.local.get(['walletState', 'wallet', 'lastLoginTime']);
+    
+    // Check if login has expired (24 hours)
+    const loginExpired = !lastLoginTime || (Date.now() - lastLoginTime) > 24 * 60 * 60 * 1000;
+    
+    if (loginExpired) {
+      console.log('Login expired, clearing session...');
+      // Clear session storage
+      await browser.storage.session.clear();
+      // Update local storage
+      await browser.storage.local.remove(['isLoggedIn', 'walletState', 'lastLoginTime']);
+      // Keep wallet info but mark as logged out
+      if (wallet) {
+        await browser.storage.local.set({ hasWallet: true });
+      }
+      extensionState.isLoggedIn = false;
+      walletState.isLocked = true;
+      return;
+    }
+    
     if (storedState) {
       walletState = storedState;
     }
@@ -69,6 +88,12 @@ async function initializeState() {
     // Load session state
     const { isLoggedIn } = await browser.storage.session.get('isLoggedIn');
     extensionState.isLoggedIn = !!isLoggedIn;
+
+    // If not logged in, ensure wallet is locked
+    if (!extensionState.isLoggedIn) {
+      walletState.isLocked = true;
+      await browser.storage.local.set({ walletState });
+    }
 
     // Load connected sites
     const { connectedSites = [] } = await browser.storage.local.get('connectedSites');
