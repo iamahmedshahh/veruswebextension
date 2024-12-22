@@ -200,44 +200,40 @@ const actions = {
             // Get stored wallet data
             const { 
                 wallet, 
-                walletState: storedState, 
-                isLoggedIn,
-                lastLoginTime 
+                walletState, 
+                isLoggedIn
             } = await storage.get([
                 'wallet',
                 'walletState',
-                'isLoggedIn',
-                'lastLoginTime'
+                'isLoggedIn'
             ]);
             
-            // Check if login has expired (24 hours)
-            const loginExpired = !lastLoginTime || (Date.now() - lastLoginTime) > 24 * 60 * 60 * 1000;
-            
-            if (loginExpired) {
-                console.log('Login expired, clearing session...');
-                await storage.session.clear();
-                await storage.remove(['isLoggedIn', 'walletState', 'lastLoginTime']);
-                commit('setLoggedIn', false);
-                commit('setLocked', true);
-            } else if (storedState) {
-                commit('setLocked', storedState.isLocked);
-                commit('setLoggedIn', !!isLoggedIn);
-                if (wallet) {
-                    commit('setAddress', wallet.address);
-                    commit('setNetwork', wallet.network);
-                }
-            }
+            console.log('Retrieved state:', { 
+                hasWallet: !!wallet, 
+                isLoggedIn: !!isLoggedIn,
+                walletState 
+            });
             
             // Set hasWallet if wallet exists
             commit('setHasWallet', !!wallet);
+            
+            // If we have stored state, restore it
+            if (walletState) {
+                commit('setLocked', walletState.isLocked);
+                commit('setLoggedIn', !!isLoggedIn);
+                if (wallet) {
+                    commit('setAddress', wallet.address);
+                    commit('setNetwork', wallet.network || 'testnet');
+                }
+            }
             
             // Mark as initialized
             commit('setInitialized', true);
             
             console.log('Wallet state initialized:', {
                 hasWallet: !!wallet,
-                isLoggedIn: state.isLoggedIn,
-                isLocked: state.isLocked
+                isLoggedIn: !!isLoggedIn,
+                isLocked: walletState?.isLocked
             });
         } catch (error) {
             console.error('Failed to initialize state:', error);
@@ -269,22 +265,22 @@ const actions = {
             commit('setLoggedIn', true);
             commit('setLocked', false);
             
-            // Store login state
+            // Store login state in local storage
             await storage.set({
                 walletState: {
                     isLocked: false,
                     isLoggedIn: true,
                     address: wallet.address,
-                    network: wallet.network || 'testnet'
-                }
+                    network: wallet.network || 'testnet',
+                    lastLoginTime: Date.now()
+                },
+                isLoggedIn: true
             });
             
-            // Load wallet data
-            await dispatch('loadWallet');
+            // Initialize currencies
+            await dispatch('currencies/initialize', null, { root: true });
             
             console.log('Login successful');
-            
-            // Go to dashboard
             window.location.hash = '#/';
         } catch (error) {
             console.error('Login failed:', error);
@@ -310,12 +306,11 @@ const actions = {
                     isLoggedIn: false,
                     address: state.address,
                     network: state.network
-                }
+                },
+                isLoggedIn: false
             });
             
             console.log('Wallet locked');
-            
-            // Go to login
             window.location.hash = '#/login';
         } catch (error) {
             console.error('Failed to lock wallet:', error);
@@ -328,15 +323,13 @@ const actions = {
         try {
             console.log('Logging out...');
             
-            // Clear all wallet data
+            // Clear wallet state from store
             commit('clearWalletData');
             
             // Clear storage
-            await storage.remove(['walletState']);
+            await storage.remove(['walletState', 'isLoggedIn']);
             
             console.log('Logged out');
-            
-            // Go to login
             window.location.hash = '#/login';
         } catch (error) {
             console.error('Logout failed:', error);

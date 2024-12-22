@@ -165,6 +165,7 @@ export default {
         getBalances: state => state.balances,
         isLoading: state => state.loading,
         hasError: state => !!state.error,
-        getError: state => state.error
+        getError: state => state.error,
+        canAddMoreCurrencies: state => state.selectedCurrencies.length < MAX_CURRENCIES
     }
 };

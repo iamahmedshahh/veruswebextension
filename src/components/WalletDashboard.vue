@@ -491,6 +491,31 @@ export default {
     padding: 1rem;
 }
 
+.add-currency-card {
+    background: var(--card-bg);
+    border: 2px dashed var(--border-color);
+    border-radius: 0.5rem;
+    padding: 1rem;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    min-height: 200px;
+    transition: all 0.2s ease-in-out;
+}
+
+.add-currency-card:hover {
+    border-color: var(--primary-color);
+    background: rgba(var(--primary-color-rgb), 0.05);
+}
+
+.add-icon {
+    font-size: 2.5rem;
+    color: var(--primary-color);
+    margin-bottom: 0.5rem;
+}
+
 .card-content {
     cursor: pointer;
 }
@@ -574,28 +599,6 @@ export default {
     cursor: pointer;
     padding: 0.25rem;
     font-size: 1rem;
-}
-
-.add-currency-card {
-    border: 2px dashed var(--border-color);
-    border-radius: 0.5rem;
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    justify-content: center;
-    padding: 2rem;
-    cursor: pointer;
-    transition: all 0.2s ease;
-}
-
-.add-currency-card:hover {
-    border-color: var(--primary-color);
-    color: var(--primary-color);
-}
-
-.add-icon {
-    font-size: 2rem;
-    margin-bottom: 0.5rem;
 }
 
 .action-buttons {

@@ -124,6 +124,71 @@ async function getNetworkInfo() {
     }
 }
 
+/**
+ * Gets all currency balances for an address
+ * @param {string} address - Verus address
+ * @returns {Promise<Object>} Object mapping currency symbols to balances
+ */
+async function getAllCurrencyBalances(address) {
+    try {
+        // First get the list of all currencies
+        const currencies = await makeRPCCall('listcurrencies');
+        
+        // Initialize result object with main chain balance
+        const balances = {
+            'VRSCTEST': '0'
+        };
+        
+        // Get main chain balance
+        const mainBalance = await getAddressBalance(address);
+        balances['VRSCTEST'] = (mainBalance / 100000000).toString(); // Convert from satoshis
+        
+        // Get balances for each currency
+        for (const currency of currencies) {
+            try {
+                const result = await makeRPCCall('getaddressbalance', 
+                    [{ "addresses": [address] }],
+                    DEFAULT_RPC_CONFIG,
+                    currency.currencyid
+                );
+                balances[currency.currencyid] = (result.balance / 100000000).toString();
+            } catch (error) {
+                console.warn(`Failed to get balance for ${currency.currencyid}:`, error);
+                balances[currency.currencyid] = '0';
+            }
+        }
+        
+        return balances;
+    } catch (error) {
+        console.error('Failed to get all currency balances:', error);
+        throw error;
+    }
+}
+
+/**
+ * Get RPC connection instance
+ * @returns {Promise<Object>} RPC connection object
+ */
+async function getRPCConnection() {
+    try {
+        // Test connection
+        await testConnection();
+        
+        // Return an object with RPC methods
+        return {
+            makeRPCCall,
+            getAddressBalance,
+            getAllCurrencyBalances,
+            getAddressUtxos,
+            getAddressHistory,
+            getNetworkInfo
+        };
+    } catch (error) {
+        console.error('Failed to get RPC connection:', error);
+        return null;
+    }
+}
+
 // Export all functions
 export {
     makeRPCCall,
@@ -131,5 +196,7 @@ export {
     getAddressBalance,
     getAddressUtxos,
     getAddressHistory,
-    getNetworkInfo
+    getNetworkInfo,
+    getAllCurrencyBalances,
+    getRPCConnection
 };

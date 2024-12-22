@@ -61,60 +61,52 @@
       console.log('[Verus Provider] Handling response:', requestType, response);
       
       if (requestType === 'VERUS_CONNECT_REQUEST') {
-        if (response.error) {
-          // Only reset state if it's not a "wallet locked" error
-          // and not awaiting approval
-          if (response.error !== 'Wallet is locked' && 
-              response.status !== 'awaitingApproval') {
-            this._connecting = false;
-            this._connected = false;
-            this._address = null;
-            this._balances = {};
-            this._emit('error', new Error(response.error));
-          }
-        } else if (response.status === 'awaitingApproval') {
-          // Keep connecting state while waiting for approval
-          this._connecting = true;
-          this._emit('waiting', { message: 'Awaiting connection approval' });
-        } else if (response.status === 'connected' || (response.result && response.result.connected)) {
-          this._connected = true;
-          this._connecting = false;
-          this._address = response.address || response.result?.address;
-          
-          console.log('[Verus Provider] Connected with address:', this._address);
-          
-          // Emit events
-          this._emit('connect', { address: this._address });
-          this._emit('accountsChanged', [this._address]);
-          
-          // Fetch initial balances
-          this._fetchBalances();
-        } else if (response.status === 'rejected') {
+        if (!response) {
           this._connecting = false;
           this._connected = false;
           this._address = null;
           this._balances = {};
-          this._emit('error', new Error('Connection rejected by user'));
+          window.postMessage({ type: 'VERUS_SET_CONNECTING', payload: { isConnecting: false } }, '*');
+          this._emit('error', new Error('Connection failed'));
+          return;
         }
-      } else if (requestType === 'VERUS_CHECK_CONNECTION') {
-        if (!response.error && response.connected) {
+
+        if (response.error) {
+          this._connecting = false;
+          this._connected = false;
+          this._address = null;
+          this._balances = {};
+          window.postMessage({ type: 'VERUS_SET_CONNECTING', payload: { isConnecting: false } }, '*');
+          this._emit('error', new Error(response.error));
+          return;
+        }
+
+        if (response.result?.connected) {
           this._connected = true;
-          this._address = response.address;
-          console.log('[Verus Provider] Already connected:', this._address);
+          this._connecting = false;
+          this._address = response.result.address;
+          
+          console.log('[Verus Provider] Connected with address:', this._address);
+          
+          window.postMessage({ type: 'VERUS_SET_CONNECTING', payload: { isConnecting: false } }, '*');
+          
           this._emit('connect', { address: this._address });
           this._emit('accountsChanged', [this._address]);
           
-          // Fetch initial balances for existing connection
           this._fetchBalances();
         }
-      } else if (requestType === 'VERUS_GET_BALANCES_REQUEST') {
-        if (!response.error && response.result) {
-          this._balances = response.result;
-          this._emit('balancesChanged', this._balances);
-        }
-      } else if (requestType === 'VERUS_GET_TOTAL_BALANCE_REQUEST') {
-        if (!response.error && response.result) {
-          this._emit('totalBalanceChanged', response.result);
+      }
+
+      // Handle pending request resolution
+      if (response.requestId) {
+        const pendingRequest = this._pendingRequests.get(response.requestId);
+        if (pendingRequest) {
+          if (response.error) {
+            pendingRequest.reject(new Error(response.error));
+          } else {
+            pendingRequest.resolve(response);
+          }
+          this._pendingRequests.delete(response.requestId);
         }
       }
     }
@@ -167,92 +159,126 @@
     }
 
     async connect() {
-      console.log('[Verus Provider] Connect called');
-      if (this._connected) {
-        console.log('[Verus Provider] Already connected:', { address: this._address });
+      if (this._connecting || this._connected) {
         return { address: this._address };
-      }
-      
-      if (this._connecting) {
-        console.log('[Verus Provider] Already connecting...');
-        return this._connectPromise;
       }
 
       this._connecting = true;
-      console.log('[Verus Provider] Initiating new connection...');
-      
-      // Generate unique request ID
-      const requestId = Math.random().toString(36).substring(7);
-      
+      window.postMessage({ type: 'VERUS_SET_CONNECTING', payload: { isConnecting: true } }, '*');
+
       try {
-        this._connectPromise = new Promise((resolve, reject) => {
+        // Generate request ID
+        const requestId = Math.random().toString(36).substring(7);
+        
+        return new Promise((resolve, reject) => {
           this._pendingRequests.set(requestId, { resolve, reject });
+          
+          // Send connection request
           window.postMessage({
             type: 'VERUS_CONNECT_REQUEST',
-            requestId
+            payload: { requestId }
           }, '*');
         });
-        
-        return await this._connectPromise;
       } catch (error) {
-        // Only reset state if it's not waiting for approval
-        if (!error.message.includes('Awaiting approval')) {
-          this._connecting = false;
-          this._connected = false;
-          this._address = null;
-        }
+        this._connecting = false;
+        window.postMessage({ type: 'VERUS_SET_CONNECTING', payload: { isConnecting: false } }, '*');
         throw error;
-      } finally {
-        this._connectPromise = null;
+      }
+    }
+
+    async _sendMessage(messageType, params = {}) {
+      if (!this._connected && messageType !== 'VERUS_CHECK_CONNECTION') {
+        throw new Error('Not connected');
+      }
+
+      try {
+        const requestId = Math.random().toString(36).substring(7);
+        
+        return new Promise((resolve, reject) => {
+          this._pendingRequests.set(requestId, { resolve, reject });
+          
+          window.postMessage({
+            type: messageType,
+            requestId,
+            ...params
+          }, '*');
+
+          // Add timeout
+          setTimeout(() => {
+            const request = this._pendingRequests.get(requestId);
+            if (request) {
+              this._pendingRequests.delete(requestId);
+              reject(new Error('Request timed out'));
+            }
+          }, 30000); // 30 second timeout
+        });
+      } catch (error) {
+        console.error('[Verus Provider] Failed to send message:', error);
+        throw error;
       }
     }
 
     async _fetchBalances() {
       try {
-        window.postMessage({
-          type: 'VERUS_GET_BALANCES_REQUEST'
-        }, '*');
+        const response = await this._sendMessage('VERUS_GET_BALANCES_REQUEST');
+        if (response.balances) {
+          this._balances = response.balances;
+          this._emit('balancesChanged', this._balances);
+        }
       } catch (error) {
-        console.error('[Verus Provider] Error fetching balances:', error);
+        console.error('[Verus Provider] Failed to fetch balances:', error);
+        this._emit('error', error);
       }
     }
 
     async getAllBalances() {
-      console.log('[Verus Provider] Getting all balances');
-      const response = await this._sendMessage('VERUS_GET_BALANCES_REQUEST');
-      return response;
+      try {
+        const response = await this._sendMessage('VERUS_GET_BALANCES_REQUEST');
+        if (response.balances) {
+          this._balances = response.balances;
+          this._emit('balancesChanged', this._balances);
+        }
+        return response;
+      } catch (error) {
+        console.error('[Verus Provider] Failed to get all balances:', error);
+        throw error;
+      }
     }
 
     async getTotalBalance() {
-      console.log('[Verus Provider] Getting total balance');
-      const response = await this._sendMessage('VERUS_GET_TOTAL_BALANCE_REQUEST');
-      return response;
-    }
-
-    async _sendMessage(messageType) {
       try {
-        const requestId = Math.random().toString(36).substring(7);
-        const response = await new Promise((resolve, reject) => {
-          const responseHandler = (event) => {
-            if (event.source !== window) return;
-            if (!event.data.type || !event.data.type.endsWith('_RESPONSE')) return;
-            if (event.data.payload?.requestId !== requestId) return;
-            
-            window.removeEventListener('message', responseHandler);
-            resolve(event.data.payload);
-          };
-          
-          window.addEventListener('message', responseHandler);
-          window.postMessage({
-            type: messageType,
-            requestId
-          }, '*');
-        });
+        const response = await this._sendMessage('VERUS_GET_TOTAL_BALANCE_REQUEST');
+        if (response.balances) {
+          this._balances = response.balances;
+          this._emit('balancesChanged', this._balances);
+        }
         return response;
       } catch (error) {
-        console.error('[Verus Provider] Error sending message:', error);
+        console.error('[Verus Provider] Failed to get total balance:', error);
         throw error;
       }
+    }
+
+    async getBalance(currency = 'VRSCTEST') {
+      console.log('[Verus Provider] Getting balance for:', currency);
+      const response = await this._sendMessage('VERUS_GET_BALANCE_REQUEST', { currency });
+      if (response.error) {
+        throw new Error(response.error);
+      }
+      
+      const balance = response.balance || response.result?.balance || '0';
+      if (balance !== '0') {
+        this._balances = { 
+          ...this._balances, 
+          [currency]: balance 
+        };
+        this._emit('balanceChanged', { currency, balance }); // Keep event format consistent
+      }
+      
+      return {
+        balance,
+        requestId: response.requestId
+      };
     }
   }
 

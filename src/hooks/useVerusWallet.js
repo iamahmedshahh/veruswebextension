@@ -69,7 +69,14 @@ export function useVerusWallet() {
     const handleBalancesChanged = (newBalances) => {
         console.log('[Verus] Balances changed:', newBalances);
         if (newBalances && typeof newBalances === 'object') {
-            balances.value = newBalances.balances || {};
+            // Filter out any undefined keys
+            const cleanBalances = {};
+            Object.entries(newBalances).forEach(([currency, amount]) => {
+                if (currency && currency !== 'undefined') {
+                    cleanBalances[currency] = amount;
+                }
+            });
+            balances.value = cleanBalances;
         }
     };
 
@@ -103,14 +110,15 @@ export function useVerusWallet() {
             const result = await provider.getAllBalances();
             console.log('[Verus] Balances result:', result);
             
-            if (result && typeof result === 'object') {
-                balances.value = result.balances || {};
-            }
-
-            // Get total balance
-            const totalResult = await provider.getTotalBalance();
-            if (totalResult && totalResult.totalBalance) {
-                totalBalance.value = totalResult.totalBalance;
+            if (result?.balances) {
+                // Filter out any undefined keys
+                const cleanBalances = {};
+                Object.entries(result.balances).forEach(([currency, amount]) => {
+                    if (currency && currency !== 'undefined') {
+                        cleanBalances[currency] = amount;
+                    }
+                });
+                balances.value = cleanBalances;
             }
 
             return balances.value;
@@ -133,13 +141,18 @@ export function useVerusWallet() {
             const result = await provider.getTotalBalance();
             console.log('[Verus] Total balance result:', result);
             
-            if (result) {
-                if (result.totalBalance) {
-                    totalBalance.value = result.totalBalance;
-                }
-                if (result.balances) {
-                    balances.value = result.balances;
-                }
+            if (result?.totalBalance) {
+                totalBalance.value = result.totalBalance;
+            }
+            if (result?.balances) {
+                // Filter out any undefined keys
+                const cleanBalances = {};
+                Object.entries(result.balances).forEach(([currency, amount]) => {
+                    if (currency && currency !== 'undefined') {
+                        cleanBalances[currency] = amount;
+                    }
+                });
+                balances.value = cleanBalances;
             }
             return totalBalance.value;
         } catch (err) {

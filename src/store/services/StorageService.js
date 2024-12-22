@@ -91,6 +91,72 @@ const storage = {
             console.warn('Storage clear failed, using localStorage:', error);
             localStorage.clear();
         }
+    },
+
+    session: {
+        async get(keys) {
+            try {
+                if (typeof browser !== 'undefined' && browser.storage && browser.storage.session) {
+                    return await browser.storage.session.get(keys);
+                }
+                // Fallback to sessionStorage
+                const result = {};
+                const keyArray = Array.isArray(keys) ? keys : [keys];
+                keyArray.forEach(key => {
+                    const value = sessionStorage.getItem(key);
+                    if (value) {
+                        try {
+                            result[key] = JSON.parse(value);
+                        } catch {
+                            result[key] = value;
+                        }
+                    }
+                });
+                return result;
+            } catch (error) {
+                console.warn('Session storage get failed:', error);
+                return {};
+            }
+        },
+
+        async set(data) {
+            try {
+                if (typeof browser !== 'undefined' && browser.storage && browser.storage.session) {
+                    await browser.storage.session.set(data);
+                } else {
+                    Object.entries(data).forEach(([key, value]) => {
+                        sessionStorage.setItem(key, JSON.stringify(value));
+                    });
+                }
+            } catch (error) {
+                console.warn('Session storage set failed:', error);
+            }
+        },
+
+        async remove(keys) {
+            try {
+                if (typeof browser !== 'undefined' && browser.storage && browser.storage.session) {
+                    await browser.storage.session.remove(keys);
+                } else {
+                    const keyArray = Array.isArray(keys) ? keys : [keys];
+                    keyArray.forEach(key => sessionStorage.removeItem(key));
+                }
+            } catch (error) {
+                console.warn('Session storage remove failed:', error);
+            }
+        },
+
+        async clear() {
+            try {
+                if (typeof browser !== 'undefined' && browser.storage && browser.storage.session) {
+                    await browser.storage.session.clear();
+                } else {
+                    sessionStorage.clear();
+                }
+            } catch (error) {
+                console.warn('Session storage clear failed:', error);
+            }
+        }
     }
 };
 

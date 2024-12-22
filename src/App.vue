@@ -2,11 +2,10 @@
 import { computed, onMounted, ref } from 'vue';
 import { useStore } from 'vuex';
 import { useRoute } from 'vue-router';
-import browser from 'webextension-polyfill';
+import storage from './store/services/StorageService';
 import WalletDashboard from './components/WalletDashboard.vue';
 import WalletSetup from './components/WalletSetup.vue';
 import Login from './components/Login.vue';
-import SessionService from './store/services/SessionService';
 
 const store = useStore();
 const route = useRoute();
@@ -26,18 +25,13 @@ onMounted(async () => {
     // Check if this is opened as a popup action (no route)
     isPopupAction.value = !route.name && window.location.hash === '';
     
-    // Initialize session service
-    SessionService.init();
+    // Initialize wallet state
+    await store.dispatch('wallet/initializeState');
     
-    // Load wallet data first
-    await store.dispatch('wallet/loadWallet');
-    
-    // Get stored state - only wallet data from local storage
-    const data = await browser.storage.local.get(['wallet', 'hasWallet']);
-    console.log('Stored state:', data);
-    
-    if (data.wallet && data.hasWallet) {
-      store.commit('wallet/setHasWallet', true);
+    // Load wallet data if we're logged in
+    if (store.getters['wallet/isLoggedIn']) {
+      await store.dispatch('wallet/loadWallet');
+      await store.dispatch('currencies/initialize');
     }
   } catch (err) {
     console.error('Error initializing app:', err);
