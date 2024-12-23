@@ -173,9 +173,6 @@ browser.runtime.onMessage.addListener(async (message, sender) => {
           // Add to connected sites
           extensionState.connectedSites.add(origin);
           
-          // Set session state
-          await browser.storage.session.set({ isLoggedIn: true });
-          
           return {
             result: {
               connected: true,
@@ -191,6 +188,24 @@ browser.runtime.onMessage.addListener(async (message, sender) => {
             requestId: message.requestId 
           };
         }
+
+      case 'CHECK_SESSION':
+        try {
+          const { isLoggedIn } = await browser.storage.session.get('isLoggedIn');
+          if (!isLoggedIn) {
+            const { storedCredentials } = await browser.storage.local.get('storedCredentials');
+            if (storedCredentials) {
+              await browser.storage.session.set({ isLoggedIn: true });
+              extensionState.isLoggedIn = true;
+              return { isLoggedIn: true };
+            }
+          }
+          return { isLoggedIn: !!isLoggedIn };
+        } catch (error) {
+          console.error('[Verus Background] Session check error:', error);
+          return { error: error.message };
+        }
+
       case 'CONNECT_RESPONSE':
         try {
           console.log('[Verus Background] Received CONNECT_RESPONSE:', message);
