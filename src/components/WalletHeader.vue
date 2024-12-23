@@ -176,10 +176,9 @@ async function toggleLock() {
       // If unlocked, lock the wallet
       console.log('Locking wallet...');
       await store.dispatch('wallet/lock');
-      console.log('Wallet locked');
     } else {
-      // If locked, redirect to login page
-      window.location.hash = '/';
+      // If locked, go to login
+      window.location.hash = '#/login';
     }
   } catch (error) {
     console.error('Error in toggleLock:', error);

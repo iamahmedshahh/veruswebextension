@@ -17,50 +17,70 @@
                 <h2>Total Balance</h2>
                 <div class="total-balance-amount">{{ formatBalance(totalBalance) }}</div>
             </div>
-            <div class="currency-cards">
+            
+            <div class="dashboard-tabs">
+                <button 
+                    class="tab-button" 
+                    :class="{ active: activeTab === 'currencies' }"
+                    @click="activeTab = 'currencies'"
+                >
+                    Currencies
+                </button>
+                <button 
+                    class="tab-button" 
+                    :class="{ active: activeTab === 'nfts' }"
+                    @click="activeTab = 'nfts'"
+                >
+                    NFTs
+                </button>
+            </div>
+
+            <div v-if="activeTab === 'currencies'" class="currency-cards">
                 <div 
                     v-for="currency in selectedCurrencies" 
                     :key="currency" 
                     class="currency-card"
                 >
-                    <div class="card-header">
-                        <h3>{{ currency }}</h3>
-                        <button 
-                            class="remove-currency" 
-                            @click="removeCurrency(currency)"
-                            v-if="currency !== 'VRSCTEST'"
-                        >
-                            &times;
-                        </button>
-                    </div>
-                    <div class="balance-section">
-                        <div class="balance">
-                            <span class="balance-label">Balance:</span>
-                            <span class="balance-amount">{{ formatBalance(getBalance(currency)) }}</span>
+                    <div class="card-content" @click="$router.push(`/currency/${currency}`)">
+                        <div class="card-header">
+                            <h3>{{ currency }}</h3>
+                            <button 
+                                class="remove-currency" 
+                                @click.stop="removeCurrency(currency)"
+                                v-if="currency !== 'VRSCTEST'"
+                            >
+                                &times;
+                            </button>
                         </div>
-                        <div class="address-section">
-                            <span class="address-label">Address:</span>
-                            <div class="address-value">
-                                <span class="address">{{ address }}</span>
-                                <button 
-                                    class="copy-button"
-                                    @click="copyToClipboard(address)"
-                                    title="Copy address"
-                                >
-                                    📋
-                                </button>
+                        <div class="balance-section">
+                            <div class="balance">
+                                <span class="balance-label">Balance:</span>
+                                <span class="balance-amount">{{ formatBalance(getBalance(currency)) }}</span>
+                            </div>
+                            <div class="address-section">
+                                <span class="address-label">Address:</span>
+                                <div class="address-value">
+                                    <span class="address">{{ address }}</span>
+                                    <button 
+                                        class="copy-button"
+                                        @click.stop="copyToClipboard(address)"
+                                        title="Copy address"
+                                    >
+                                        📋
+                                    </button>
+                                </div>
                             </div>
                         </div>
-                        <div class="action-buttons">
-                            <button class="action-btn send" @click="handleSend(currency)">
-                                <i class="fas fa-arrow-up"></i>
-                                Send
-                            </button>
-                            <button class="action-btn receive" @click="handleReceive(currency)">
-                                <i class="fas fa-arrow-down"></i>
-                                Receive
-                            </button>
-                        </div>
+                    </div>
+                    <div class="action-buttons">
+                        <button class="action-btn send" @click.stop="handleSend(currency)">
+                            <i class="fas fa-arrow-up"></i>
+                            Send
+                        </button>
+                        <button class="action-btn receive" @click.stop="handleReceive(currency)">
+                            <i class="fas fa-arrow-down"></i>
+                            Receive
+                        </button>
                     </div>
                 </div>
 
@@ -72,6 +92,10 @@
                     <div class="add-icon">+</div>
                     <span>Add Currency</span>
                 </div>
+            </div>
+
+            <div v-if="activeTab === 'nfts'" class="nft-tab">
+                <NFTGallery />
             </div>
         </div>
 
@@ -172,6 +196,7 @@ import WalletHeader from './WalletHeader.vue';
 import LoadingBar from './LoadingBar.vue';
 import Settings from './Settings.vue';
 import CurrencySelector from './CurrencySelector.vue';
+import NFTGallery from './NFTGallery.vue';
 import { sendCurrency, estimateFee, validateAddress } from '../utils/transaction';
 
 export default {
@@ -181,7 +206,8 @@ export default {
         WalletHeader,
         LoadingBar,
         Settings,
-        CurrencySelector
+        CurrencySelector,
+        NFTGallery
     },
 
     setup() {
@@ -197,6 +223,7 @@ export default {
         const isLoading = ref(false);
         const estimatedFee = ref(0);
         const receiveQrCode = ref('');
+        const activeTab = ref('currencies');
 
         const walletLoading = computed(() => store.state.wallet.loading);
         const walletError = computed(() => store.state.wallet.error);
@@ -398,7 +425,8 @@ export default {
             executeSend,
             updateEstimatedFee,
             receiveQrCode,
-            totalBalance
+            totalBalance,
+            activeTab
         };
     }
 };
@@ -476,6 +504,26 @@ export default {
     font-weight: 600;
 }
 
+.dashboard-tabs {
+    display: flex;
+    gap: 1rem;
+    margin-bottom: 1rem;
+    border-bottom: 1px solid var(--border-color);
+}
+
+.tab-button {
+    padding: 0.5rem 1rem;
+    border: none;
+    border-radius: 4px 4px 0 0;
+    background: none;
+    cursor: pointer;
+}
+
+.tab-button.active {
+    background: white;
+    border-bottom: 2px solid var(--primary-color);
+}
+
 .currency-cards {
     display: grid;
     grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
@@ -487,6 +535,35 @@ export default {
     border: 1px solid var(--border-color);
     border-radius: 0.5rem;
     padding: 1rem;
+}
+
+.add-currency-card {
+    background: var(--card-bg);
+    border: 2px dashed var(--border-color);
+    border-radius: 0.5rem;
+    padding: 1rem;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    min-height: 200px;
+    transition: all 0.2s ease-in-out;
+}
+
+.add-currency-card:hover {
+    border-color: var(--primary-color);
+    background: rgba(var(--primary-color-rgb), 0.05);
+}
+
+.add-icon {
+    font-size: 2.5rem;
+    color: var(--primary-color);
+    margin-bottom: 0.5rem;
+}
+
+.card-content {
+    cursor: pointer;
 }
 
 .card-header {
@@ -568,28 +645,6 @@ export default {
     cursor: pointer;
     padding: 0.25rem;
     font-size: 1rem;
-}
-
-.add-currency-card {
-    border: 2px dashed var(--border-color);
-    border-radius: 0.5rem;
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    justify-content: center;
-    padding: 2rem;
-    cursor: pointer;
-    transition: all 0.2s ease;
-}
-
-.add-currency-card:hover {
-    border-color: var(--primary-color);
-    color: var(--primary-color);
-}
-
-.add-icon {
-    font-size: 2rem;
-    margin-bottom: 0.5rem;
 }
 
 .action-buttons {
@@ -749,5 +804,9 @@ export default {
 
 .copy-button:hover {
     color: var(--primary-color);
+}
+
+.nft-tab {
+    padding: 1rem;
 }
 </style>

@@ -16,6 +16,12 @@ class SessionService {
      */
     async handleBrowserClose() {
         try {
+            // Don't clear login state if we're in a connection flow
+            const state = await storage.get(['isConnecting']);
+            if (state.isConnecting) {
+                return;
+            }
+            
             // Clear login state when browser closes
             await storage.set({
                 isLoggedIn: false,

@@ -1,5 +1,5 @@
 import browser from 'webextension-polyfill';
-import { testConnection } from './utils/verus-rpc';
+import { testConnection, getRPCConnection } from './utils/verus-rpc';
 
 console.log('Background script loaded');
 
@@ -10,7 +10,7 @@ const extensionState = {
   isInitialized: false,
   hasWallet: false,
   isLoggedIn: false,
-  connectedSites: new Map(),
+  connectedSites: new Set(),
   pendingRequests: new Map()
 };
 
@@ -60,7 +60,26 @@ async function initializeState() {
     console.log('RPC connection status:', isConnected ? 'Connected' : 'Failed to connect');
     
     // Load wallet state
-    const { walletState: storedState, wallet } = await browser.storage.local.get(['walletState', 'wallet']);
+    const { walletState: storedState, wallet, lastLoginTime } = await browser.storage.local.get(['walletState', 'wallet', 'lastLoginTime']);
+    
+    // Check if login has expired (24 hours)
+    const loginExpired = !lastLoginTime || (Date.now() - lastLoginTime) > 24 * 60 * 60 * 1000;
+    
+    if (loginExpired) {
+      console.log('Login expired, clearing session...');
+      // Clear session storage
+      await browser.storage.session.clear();
+      // Update local storage
+      await browser.storage.local.remove(['isLoggedIn', 'walletState', 'lastLoginTime']);
+      // Keep wallet info but mark as logged out
+      if (wallet) {
+        await browser.storage.local.set({ hasWallet: true });
+      }
+      extensionState.isLoggedIn = false;
+      walletState.isLocked = true;
+      return;
+    }
+    
     if (storedState) {
       walletState = storedState;
     }
@@ -70,17 +89,23 @@ async function initializeState() {
     const { isLoggedIn } = await browser.storage.session.get('isLoggedIn');
     extensionState.isLoggedIn = !!isLoggedIn;
 
+    // If not logged in, ensure wallet is locked
+    if (!extensionState.isLoggedIn) {
+      walletState.isLocked = true;
+      await browser.storage.local.set({ walletState });
+    }
+
     // Load connected sites
     const { connectedSites = [] } = await browser.storage.local.get('connectedSites');
     connectedSites.forEach(site => {
-      extensionState.connectedSites.set(site.origin, site);
+      extensionState.connectedSites.add(site.origin);
     });
 
     console.log('State initialized:', {
       walletState,
       hasWallet: extensionState.hasWallet,
       isLoggedIn: extensionState.isLoggedIn,
-      connectedSites: Array.from(extensionState.connectedSites.keys())
+      connectedSites: Array.from(extensionState.connectedSites)
     });
   } catch (error) {
     console.error('Failed to initialize state:', error);
@@ -112,287 +137,302 @@ const promiseResolvers = new Map();
 let requestId = 0;
 
 // Message handling
-browser.runtime.onMessage.addListener((message, sender) => {
-  console.log('[Verus Background] Received message:', message, 'from sender:', sender);
+browser.runtime.onMessage.addListener(async (message, sender) => {
+  console.log('[Verus Background] Received message:', message.type, message.requestId);
   
-  if (message.type === 'CONNECT_REQUEST') {
-    return (async () => {
-      try {
-        // Check if wallet exists
-        const { wallet } = await browser.storage.local.get('wallet');
-        if (!wallet) {
-          console.log('[Verus Background] No wallet configured');
-          await browser.windows.create({
-            url: 'popup.html#/setup',
-            type: 'popup',
-            width: 400,
-            height: 600
-          });
-          return { error: 'No wallet configured' };
-        }
+  try {
+    switch (message.type) {
+      case 'CONNECT_REQUEST':
+        try {
+          const origin = message.origin;
+          if (!origin) {
+            throw new Error('Origin not provided');
+          }
 
-        // Check if site is already connected
-        if (extensionState.connectedSites.has(sender.origin)) {
-          console.log('[Verus Background] Site already connected');
-          return { 
+          // Get current wallet data
+          const { wallet } = await browser.storage.local.get('wallet');
+          if (!wallet || !wallet.address) {
+            return { 
+              error: 'No wallet found',
+              requestId: message.requestId 
+            };
+          }
+
+          // Check if site is already connected
+          if (extensionState.connectedSites.has(origin)) {
+            return {
+              result: {
+                connected: true,
+                address: wallet.address,
+                chainId: 'testnet'
+              },
+              requestId: message.requestId
+            };
+          }
+
+          // Add to connected sites
+          extensionState.connectedSites.add(origin);
+          
+          return {
             result: {
               connected: true,
-              address: walletState.address
-            }
+              address: wallet.address,
+              chainId: 'testnet'
+            },
+            requestId: message.requestId
+          };
+        } catch (error) {
+          console.error('[Verus Background] Connection error:', error);
+          return { 
+            error: error.message,
+            requestId: message.requestId 
           };
         }
 
-        // Check login state from session storage
-        const { isLoggedIn } = await browser.storage.session.get('isLoggedIn');
-        
-        if (!isLoggedIn) {
-          console.log('[Verus Background] Wallet is locked, showing unlock page');
-          // Generate unique request ID for the connection request
-          const requestId = Math.random().toString(36).substring(7);
+      case 'CHECK_SESSION':
+        try {
+          const { isLoggedIn } = await browser.storage.session.get('isLoggedIn');
+          if (!isLoggedIn) {
+            const { storedCredentials } = await browser.storage.local.get('storedCredentials');
+            if (storedCredentials) {
+              await browser.storage.session.set({ isLoggedIn: true });
+              extensionState.isLoggedIn = true;
+              return { isLoggedIn: true };
+            }
+          }
+          return { isLoggedIn: !!isLoggedIn };
+        } catch (error) {
+          console.error('[Verus Background] Session check error:', error);
+          return { error: error.message };
+        }
+
+      case 'CONNECT_RESPONSE':
+        try {
+          console.log('[Verus Background] Received CONNECT_RESPONSE:', message);
           
-          // Store the pending request
-          extensionState.pendingRequests.set(requestId, {
-            type: 'connect',
-            origin: sender.origin,
-            tabId: sender.tab.id
-          });
+          const pendingRequest = extensionState.pendingRequests.get(message.requestId);
+          if (!pendingRequest) {
+            throw new Error('No pending request found');
+          }
+
+          // Get the current wallet data
+          const { wallet } = await browser.storage.local.get('wallet');
+          if (!wallet || !wallet.address) {
+            throw new Error('No wallet found');
+          }
           
-          // Open unlock page with the request ID
-          await browser.windows.create({
-            url: `popup.html#/unlock?requestId=${requestId}&origin=${encodeURIComponent(sender.origin)}`,
-            type: 'popup',
-            width: 400,
-            height: 600
-          });
-          return { error: 'Wallet is locked' };
+          if (message.approved) {
+            // Add to connected sites
+            extensionState.connectedSites.add(pendingRequest.origin);
+            
+            // Save connected sites
+            await browser.storage.local.set({
+              connectedSites: Array.from(extensionState.connectedSites)
+            });
+            
+            // Update wallet state
+            walletState.address = wallet.address;
+            
+            // Notify content script
+            await browser.tabs.sendMessage(pendingRequest.tabId, {
+              type: 'CONNECT_RESULT',
+              status: 'connected',
+              address: wallet.address,
+              chainId: walletState.network,
+              requestId: message.requestId
+            });
+            
+            extensionState.pendingRequests.delete(message.requestId);
+            return { success: true };
+          } else {
+            // Notify content script of rejection
+            await browser.tabs.sendMessage(pendingRequest.tabId, {
+              type: 'CONNECT_RESULT',
+              status: 'rejected',
+              requestId: message.requestId
+            });
+            
+            extensionState.pendingRequests.delete(message.requestId);
+            return { error: 'Connection rejected' };
+          }
+        } catch (error) {
+          console.error('[Verus Background] Error handling connect response:', error);
+          return { error: error.message };
         }
 
-        // If wallet is unlocked, show connection approval
-        console.log('[Verus Background] Wallet is unlocked, showing approval page');
-        const requestId = Math.random().toString(36).substring(7);
-        
-        // Store the pending request
-        extensionState.pendingRequests.set(requestId, {
-          type: 'connect',
-          origin: sender.origin,
-          tabId: sender.tab.id
-        });
-        
-        // Open approval page
-        await browser.windows.create({
-          url: `popup.html#/approve?requestId=${requestId}&origin=${encodeURIComponent(sender.origin)}`,
-          type: 'popup',
-          width: 400,
-          height: 600
-        });
-        
-        return { status: 'awaitingApproval' };
-      } catch (error) {
-        console.error('[Verus Background] Error handling connect request:', error);
-        return { error: error.message };
-      }
-    })();
-  }
+      case 'UNLOCK_REQUEST':
+        try {
+          console.log('[Verus Background] Processing unlock request');
+          
+          // Get the stored wallet data
+          const { wallet } = await browser.storage.local.get('wallet');
+          if (!wallet) {
+            throw new Error('No wallet found');
+          }
 
-  // Handle unlock request from popup
-  if (message.type === 'UNLOCK_REQUEST') {
-    return (async () => {
-      try {
-        console.log('[Verus Background] Processing unlock request');
-        
-        // Get the stored wallet data
-        const { wallet } = await browser.storage.local.get('wallet');
-        if (!wallet) {
-          throw new Error('No wallet found');
-        }
+          // Set session storage to indicate logged in state
+          await browser.storage.session.set({ isLoggedIn: true });
+          
+          // Update wallet state
+          walletState.isLocked = false;
+          walletState.address = wallet.address;
 
-        // Set session storage to indicate logged in state
-        await browser.storage.session.set({ isLoggedIn: true });
-        
-        // Update wallet state
-        walletState.isLocked = false;
-        walletState.address = wallet.address;
-
-        console.log('[Verus Background] Wallet unlocked successfully');
-        return { success: true };
-      } catch (error) {
-        console.error('[Verus Background] Unlock error:', error);
-        return { error: error.message };
-      }
-    })();
-  }
-
-  // Handle connection approval from popup
-  if (message.type === 'CONNECT_RESPONSE') {
-    return (async () => {
-      try {
-        console.log('[Verus Background] Received CONNECT_RESPONSE:', message);
-        
-        // Extract requestId from sender URL if not provided in message
-        let requestId = message.requestId;
-        if (!requestId && sender.url) {
-          const url = new URL(sender.url);
-          const hashParams = new URLSearchParams(url.hash.replace('#/connect?', ''));
-          requestId = hashParams.get('requestId');
-          console.log('[Verus Background] Extracted requestId from URL hash:', requestId);
-        }
-
-        if (!requestId) {
-          console.error('[Verus Background] No requestId found in message or URL');
-          throw new Error('Invalid connection request: missing requestId');
-        }
-
-        const request = extensionState.pendingRequests.get(requestId);
-        if (!request) {
-          // Request might have been already handled
-          console.log('[Verus Background] Request already handled for ID:', requestId);
+          console.log('[Verus Background] Wallet unlocked successfully');
           return { success: true };
+        } catch (error) {
+          console.error('[Verus Background] Unlock error:', error);
+          return { error: error.message };
         }
-
-        console.log('[Verus Background] Found pending request:', request);
-
-        // Clean up the pending request AFTER we handle it
-        const approved = message.approved;
-        if (!approved) {
-          console.log('[Verus Background] Connection rejected');
-          extensionState.pendingRequests.delete(requestId);
-          // Notify content script of rejection
-          await browser.tabs.sendMessage(request.tabId, {
-            type: 'CONNECT_RESULT',
-            error: 'Connection rejected'
-          });
+      case 'VERUS_GET_ACCOUNTS':
+        try {
+          const origin = sender.origin || sender.url;
+          const connectedSite = extensionState.connectedSites.has(origin);
           
-          // Close the popup
-          if (sender.tab && sender.tab.windowId) {
-            await browser.windows.remove(sender.tab.windowId);
+          if (!connectedSite) {
+            return { result: [] };
           }
           
-          return { success: false, error: 'Connection rejected' };
+          return {
+            result: [walletState.address]
+          };
+        } catch (error) {
+          console.error('[Verus Background] Error:', error);
+          return { error: error.message };
+        }
+      case 'UNLOCK_RESULT':
+        const { id, success, error } = message;
+        console.log('[Verus Background] Unlock result:', { id, success, error });
+        
+        const resolver = promiseResolvers.get(id);
+        if (resolver) {
+          if (success) {
+            resolver.resolve();
+          } else {
+            resolver.reject(new Error(error || 'Unlock failed'));
+          }
+        }
+        return true;
+      case 'VERUS_GET_BALANCE_REQUEST':
+        try {
+          const origin = new URL(sender.tab.url).origin;
+          if (!extensionState.connectedSites.has(origin)) {
+            return { error: 'Site not connected' };
+          }
+          
+          // Get the current wallet data
+          const { wallet } = await browser.storage.local.get('wallet');
+          if (!wallet || !wallet.address) {
+            return { error: 'No wallet found' };
+          }
+          
+          // Get the balance from RPC
+          const { getAddressBalance } = await import('./utils/verus-rpc.js');
+          const balance = await getAddressBalance(wallet.address);
+          
+          return {
+            result: balance
+          };
+        } catch (error) {
+          console.error('[Verus Background] Error getting balance:', error);
+          return { error: error.message };
+        }
+      case 'GET_BALANCE_REQUEST':
+        try {
+          const origin = new URL(sender.tab.url).origin;
+          if (!extensionState.connectedSites.has(origin)) {
+            throw new Error('Site not connected');
+          }
+
+          const currency = message.currency || 'VRSCTEST';
+          console.log('[Verus Background] Getting balance for:', currency);
+          
+          // TODO: Implement actual balance fetching
+          // For now, return a mock balance
+          return {
+            result: {
+              balance: '0.00000000',
+              currency
+            }
+          };
+        } catch (err) {
+          console.error('[Verus Background] Error getting balance:', err);
+          return { error: err.message };
+        }
+      case 'VERUS_GET_BALANCES_REQUEST':
+        try {
+            const { balances } = await browser.storage.local.get('balances');
+            console.log('[Verus Background] Got balances from storage:', balances);
+            
+            // Filter out any undefined keys
+            const cleanBalances = {};
+            if (balances) {
+              Object.entries(balances).forEach(([currency, amount]) => {
+                if (currency && currency !== 'undefined') {
+                  cleanBalances[currency] = amount;
+                }
+              });
+            }
+            
+            return { 
+                balances: cleanBalances || {},
+                requestId: message.requestId 
+            };
+        } catch (error) {
+            console.error('[Verus Background] Error getting balances:', error);
+            return { 
+                error: error.message,
+                requestId: message.requestId 
+            };
         }
 
-        console.log('[Verus Background] Connection approved');
-        // Add to connected sites
-        extensionState.connectedSites.set(request.origin, {
-          connectedAt: Date.now(),
-          address: walletState.address
-        });
+      case 'VERUS_GET_TOTAL_BALANCE_REQUEST':
+        try {
+            const { balances } = await browser.storage.local.get('balances');
+            console.log('[Verus Background] Got balances from storage:', balances);
+            
+            if (!balances) {
+                return { 
+                    totalBalance: '0',
+                    balances: {},
+                    requestId: message.requestId 
+                };
+            }
 
-        // Persist connection state
-        await browser.storage.local.set({
-          connectedSites: Array.from(extensionState.connectedSites.entries())
-        });
+            // Filter out undefined keys and calculate total
+            const cleanBalances = {};
+            let total = 0;
+            Object.entries(balances).forEach(([currency, amount]) => {
+                if (currency && currency !== 'undefined') {
+                    cleanBalances[currency] = amount;
+                    total += parseFloat(amount) || 0;
+                }
+            });
 
-        console.log('[Verus Background] Sending approval to tab:', request.tabId);
-        // Notify content script of approval
-        await browser.tabs.sendMessage(request.tabId, {
-          type: 'CONNECT_RESULT',
-          address: walletState.address
-        });
-
-        // Clean up the request only after successful handling
-        extensionState.pendingRequests.delete(requestId);
-        
-        // Close the popup
-        if (sender.tab && sender.tab.windowId) {
-          await browser.windows.remove(sender.tab.windowId);
+            return { 
+                totalBalance: total.toString(),
+                balances: cleanBalances,
+                requestId: message.requestId 
+            };
+        } catch (error) {
+            console.error('[Verus Background] Error getting total balance:', error);
+            return { 
+                error: error.message,
+                requestId: message.requestId 
+            };
         }
-
-        return { success: true };
-      } catch (err) {
-        console.error('[Verus Background] Error handling connect response:', err);
-        return { error: err.message };
-      }
-    })();
-  }
-
-  if (message.type === 'VERUS_GET_ACCOUNTS') {
-    return (async () => {
-      try {
-        const origin = sender.origin || sender.url;
-        const connectedSite = extensionState.connectedSites.get(origin);
-        
-        if (!connectedSite) {
-          return { result: [] };
+      case 'VERUS_SET_CONNECTING':
+        try {
+          await browser.storage.local.set({ isConnecting: message.payload.isConnecting });
+          return { success: true };
+        } catch (error) {
+          console.error('Error setting connecting state:', error);
+          return { error: error.message };
         }
-        
-        return {
-          result: [connectedSite.address]
-        };
-      } catch (error) {
-        console.error('[Verus Background] Error:', error);
-        return { error: error.message };
-      }
-    })();
-  }
-
-  if (message.type === 'UNLOCK_RESULT') {
-    const { id, success, error } = message;
-    console.log('[Verus Background] Unlock result:', { id, success, error });
-    
-    const resolver = promiseResolvers.get(id);
-    if (resolver) {
-      if (success) {
-        resolver.resolve();
-      } else {
-        resolver.reject(new Error(error || 'Unlock failed'));
-      }
+      default:
+        return false;
     }
-    return true;
+  } catch (error) {
+    console.error('[Verus Background] Error:', error);
+    return { error: error.message };
   }
-  
-  if (message.type === 'VERUS_GET_BALANCE_REQUEST') {
-    return (async () => {
-      try {
-        const origin = new URL(sender.tab.url).origin;
-        if (!extensionState.connectedSites.has(origin)) {
-          return { error: 'Site not connected' };
-        }
-        
-        // Get the current wallet data
-        const { wallet } = await browser.storage.local.get('wallet');
-        if (!wallet || !wallet.address) {
-          return { error: 'No wallet found' };
-        }
-        
-        // Get the balance from RPC
-        const { getAddressBalance } = await import('./utils/verus-rpc.js');
-        const balance = await getAddressBalance(wallet.address);
-        
-        return {
-          result: balance
-        };
-      } catch (error) {
-        console.error('[Verus Background] Error getting balance:', error);
-        return { error: error.message };
-      }
-    })();
-  }
-
-  if (message.type === 'GET_BALANCE_REQUEST') {
-    return (async () => {
-      try {
-        const origin = new URL(sender.tab.url).origin;
-        if (!extensionState.connectedSites.has(origin)) {
-          throw new Error('Site not connected');
-        }
-
-        const currency = message.currency || 'VRSCTEST';
-        console.log('[Verus Background] Getting balance for:', currency);
-        
-        // TODO: Implement actual balance fetching
-        // For now, return a mock balance
-        return {
-          result: {
-            balance: '0.00000000',
-            currency
-          }
-        };
-      } catch (err) {
-        console.error('[Verus Background] Error getting balance:', err);
-        return { error: err.message };
-      }
-    })();
-  }
-  
-  return false;
 });
