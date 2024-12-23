@@ -9,9 +9,9 @@ This project is under active development. Help us reach our goal of 2.5k to 3K V
 
 ---
 
-I would also love contributions from developers so that we can really make this extension a truly game changer for Layer 1 chains
+I would also love contributions from developers so that we can really make this extension a truly game changer for Layer 1 chains we will have open bounties and hopefully will have multiple minds contributing to it
 
-A browser extension wallet for Verus cryptocurrency that enables secure transactions and wallet management directly from your browser.
+The goal is to make a full fledge browser extension wallet for Verus cryptocurrency that enables secure transactions and wallet management directly from your browser.
 
 ## 🎯 Development Goals
 
@@ -19,7 +19,8 @@ A browser extension wallet for Verus cryptocurrency that enables secure transact
 
 - ✅ Connection with dApps and getting wallet address and balance
 - ✅ Basic wallet creation and management
-- ✅ Send/receive VRSCTEST transactions
+- ✅ Receive Testnet Currencies and VRSCTEST transactions
+- ✅ Send is undergo and will be up soon
 - ✅ Secure key storage
 
 
