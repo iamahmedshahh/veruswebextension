@@ -15,7 +15,6 @@ dist-ssr
 *.crx
 *.pem
 *.zip
-hooks
 
 # Editor directories and files
 .vscode/*
