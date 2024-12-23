@@ -9,6 +9,8 @@ This project is under active development. Help us reach our goal of 2.5k to 3K V
 
 ---
 
+I would also love contributions from developers so that we can really make this extension a truly game changer for Layer 1 chains
+
 A browser extension wallet for Verus cryptocurrency that enables secure transactions and wallet management directly from your browser.
 
 ## 🎯 Development Goals
