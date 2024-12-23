@@ -1,7 +1,7 @@
 # Verus Web Wallet Extension
 
 ### 🚀 Support Development
-This project is under active development. Help us reach our goal of 2k VRSC!
+This project is under active development. Help us reach our goal of 2.5k to 3K VRSC!
 
 **VRSC:** `RRQHGqgKivuwvWgeWAvTnGg5VJr1aWNRx5`
 
@@ -15,7 +15,7 @@ A browser extension wallet for Verus cryptocurrency that enables secure transact
 
 ### Current Achievements
 
-- ✅ Connection with dApps and getting wallet address
+- ✅ Connection with dApps and getting wallet address and balance
 - ✅ Basic wallet creation and management
 - ✅ Send/receive VRSCTEST transactions
 - ✅ Secure key storage
@@ -23,8 +23,8 @@ A browser extension wallet for Verus cryptocurrency that enables secure transact
 
 ### Next Milestone
 - 🔄 MetaMask-style transaction signing UI.
-- 🔄 Get balances on dApps and perform sends/converts signing etc.
-- 🔄 Transaction history.
+- 🔄 Added NFT Suppport.
+- 🔄 More Features such as swaps.
 - 🔄 Support for main net with enhanced testing.
 - 🔄 Multi wallet feature.
 
