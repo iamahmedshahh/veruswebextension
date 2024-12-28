@@ -1,5 +1,5 @@
 import { WalletService } from '../../services/WalletService';
-import { VerusRPCService } from '../../services/VerusRPCService';
+import { verusRPC } from '../../services/VerusRPCService';
 import storage from '../services/StorageService';
 
 // Initial state
@@ -35,7 +35,7 @@ const getters = {
 const actions = {
     async initializeRPC({ commit }) {
         try {
-            await VerusRPCService.initialize();
+            await verusRPC.initialize();
         } catch (error) {
             commit('setError', 'Failed to initialize Verus RPC: ' + error.message);
             throw error;
@@ -122,7 +122,7 @@ const actions = {
     
     async getBalance({ commit }, address) {
         try {
-            const balance = await VerusRPCService.getBalance(address);
+            const balance = await verusRPC.getBalance(address);
             commit('setBalance', balance);
             return balance;
         } catch (error) {
@@ -408,7 +408,7 @@ const actions = {
             commit('SET_LOADING_BALANCES', true);
             
             // Get all currency balances
-            const allBalances = await VerusRPCService.getAllCurrencyBalances(state.address);
+            const allBalances = await verusRPC.getAllCurrencyBalances(state.address);
             console.log('All balances:', allBalances);
             
             // Set balances in store

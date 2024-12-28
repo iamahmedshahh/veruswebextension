@@ -1,8 +1,12 @@
 // Verus RPC communication utilities
-// Default RPC configuration
-const DEFAULT_RPC_CONFIG = {
-    server: 'https://api.verustest.net'
-};
+import store from '../store'
+
+// RPC configuration
+const RPC_SERVER = "https://api.verustest.net"
+
+const getRPCConfig = () => ({
+    server: RPC_SERVER
+});
 
 /**
  * Make an RPC call to the Verus daemon
@@ -13,37 +17,34 @@ const DEFAULT_RPC_CONFIG = {
  * @param {string} currency - The currency to use (optional)
  * @returns {Promise<any>} - The response from the RPC server
  */
-async function makeRPCCall(method, params = [], config = DEFAULT_RPC_CONFIG, currency = null) {
-    const RPC_SERVER = currency ? `${config.server}/${currency.toLowerCase()}` : config.server;
-
-    console.log('Making RPC call to', RPC_SERVER, '- Method:', method, 'Params:', params);
-
+async function makeRPCCall(method, params = [], config = getRPCConfig(), currency = null) {
     try {
+        const RPC_SERVER = currency ? `${config.server}/${currency.toLowerCase()}` : config.server;
+
+        console.log('Making RPC call to', RPC_SERVER, '- Method:', method, 'Params:', params);
+
         const response = await fetch(RPC_SERVER, {
             method: 'POST',
             headers: {
-                'Content-Type': 'application/json'
+                'Content-Type': 'application/json',
+                'Accept': 'application/json',
             },
             body: JSON.stringify({
-                jsonrpc: '2.0',
+                method: method,
+                params: params,
                 id: Date.now(),
-                method,
-                params
+                jsonrpc: '2.0'
             })
         });
 
         if (!response.ok) {
-            const errorText = await response.text();
-            console.error('RPC error response:', errorText);
-            throw new Error(`HTTP error! status: ${response.status}, message: ${errorText}`);
+            throw new Error(`HTTP error! status: ${response.status}`);
         }
 
         const data = await response.json();
-        console.log('RPC response:', data);
 
         if (data.error) {
-            console.error('RPC error:', data.error);
-            throw new Error(data.error.message || 'Unknown RPC error');
+            throw new Error(data.error.message || 'RPC call failed');
         }
 
         return data.result;
@@ -133,22 +134,22 @@ async function getAllCurrencyBalances(address) {
     try {
         // First get the list of all currencies
         const currencies = await makeRPCCall('listcurrencies');
-        
+
         // Initialize result object with main chain balance
         const balances = {
             'VRSCTEST': '0'
         };
-        
+
         // Get main chain balance
         const mainBalance = await getAddressBalance(address);
         balances['VRSCTEST'] = (mainBalance / 100000000).toString(); // Convert from satoshis
-        
+
         // Get balances for each currency
         for (const currency of currencies) {
             try {
-                const result = await makeRPCCall('getaddressbalance', 
+                const result = await makeRPCCall('getaddressbalance',
                     [{ "addresses": [address] }],
-                    DEFAULT_RPC_CONFIG,
+                    getRPCConfig(),
                     currency.currencyid
                 );
                 balances[currency.currencyid] = (result.balance / 100000000).toString();
@@ -157,7 +158,7 @@ async function getAllCurrencyBalances(address) {
                 balances[currency.currencyid] = '0';
             }
         }
-        
+
         return balances;
     } catch (error) {
         console.error('Failed to get all currency balances:', error);
@@ -173,7 +174,7 @@ async function getRPCConnection() {
     try {
         // Test connection
         await testConnection();
-        
+
         // Return an object with RPC methods
         return {
             makeRPCCall,

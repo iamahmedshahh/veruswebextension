@@ -4,12 +4,23 @@ export function getManifest() {
     name: 'Verus Web Wallet',
     description: 'A secure web wallet for Verus cryptocurrency',
     version: '1.0.0',
+    icons: {
+      "16": "icons/icon16.png",
+      "48": "icons/icon48.png",
+      "128": "icons/icon128.png"
+    },
     background: {
-      service_worker: 'background.js',
+      service_worker: 'src/background.js',
       type: 'module'
     },
     action: {
-      default_popup: 'popup.html'
+      default_popup: 'popup.html',
+      default_icon: {
+        "16": "icons/icon16.png",
+        "32": "icons/icon48.png",
+        "48": "icons/icon48.png",
+        "128": "icons/icon128.png"
+      }
     },
     permissions: [
       'storage',
@@ -23,20 +34,13 @@ export function getManifest() {
     content_security_policy: {
       extension_pages: "script-src 'self' 'wasm-unsafe-eval'; object-src 'self'"
     },
-    content_scripts: [
-      {
-        matches: ['<all_urls>'],
-        js: ['contentScript.js'],
-        run_at: 'document_start',
-        all_frames: true
-      }
-    ],
     web_accessible_resources: [{
       resources: [
         'provider.js',
         'contentScript.js',
         'assets/*',
-        'popup.html'
+        'popup.html',
+        'icons/*'
       ],
       matches: ['<all_urls>']
     }]

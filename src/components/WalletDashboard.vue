@@ -33,6 +33,13 @@
                 >
                     NFTs
                 </button>
+                <button 
+                    class="tab-button" 
+                    :class="{ active: activeTab === 'identities' }"
+                    @click="activeTab = 'identities'"
+                >
+                    VerusID
+                </button>
             </div>
 
             <div v-if="activeTab === 'currencies'" class="currency-cards">
@@ -94,8 +101,12 @@
                 </div>
             </div>
 
-            <div v-if="activeTab === 'nfts'" class="nft-tab">
+            <div v-else-if="activeTab === 'nfts'" class="nft-section">
                 <NFTGallery />
+            </div>
+
+            <div v-else-if="activeTab === 'identities'" class="identity-section">
+                <IdentityManager />
             </div>
         </div>
 
@@ -197,6 +208,7 @@ import LoadingBar from './LoadingBar.vue';
 import Settings from './Settings.vue';
 import CurrencySelector from './CurrencySelector.vue';
 import NFTGallery from './NFTGallery.vue';
+import IdentityManager from './Identity/IdentityManager.vue';
 import { sendCurrency, estimateFee, validateAddress } from '../utils/transaction';
 
 export default {
@@ -207,7 +219,8 @@ export default {
         LoadingBar,
         Settings,
         CurrencySelector,
-        NFTGallery
+        NFTGallery,
+        IdentityManager
     },
 
     setup() {
@@ -806,7 +819,14 @@ export default {
     color: var(--primary-color);
 }
 
-.nft-tab {
+.nft-section {
     padding: 1rem;
+}
+
+.identity-section {
+    margin-top: 20px;
+    background: #fff;
+    border-radius: 8px;
+    box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
 }
 </style>

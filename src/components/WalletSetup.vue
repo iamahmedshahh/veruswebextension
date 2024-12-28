@@ -212,6 +212,7 @@
 <script>
 import { ref, computed } from 'vue';
 import { useStore } from 'vuex';
+import { useRouter } from 'vue-router';
 import bip39 from 'bip39';
 
 export default {
@@ -219,6 +220,7 @@ export default {
   
   setup() {
     const store = useStore();
+    const router = useRouter();
     const error = ref('');
     const loading = ref(false);
     const loadingText = ref('');
@@ -358,6 +360,9 @@ export default {
           mnemonic: mnemonic.value,
           password: password.value
         });
+
+        // Navigate to dashboard after successful import
+        router.push('/');
       } catch (err) {
         error.value = err.message || 'Failed to import wallet';
       } finally {
