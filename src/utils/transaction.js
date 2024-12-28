@@ -1,7 +1,8 @@
 import { makeRPCCall } from './verus-rpc';
 import pkg from '@bitgo/utxo-lib';
 import { Buffer } from 'buffer';
-import BigNumber from 'bignumber.js';
+import 'core-js/stable';
+import 'regenerator-runtime/runtime';
 
 // Polyfill Buffer for browser compatibility
 global.Buffer = Buffer;
@@ -10,25 +11,7 @@ const { ECPair, TransactionBuilder, address: Address, payments } = pkg;
 
 // Network configuration for Verus Testnet
 
-const NETWORK = {
-    messagePrefix: '\x18Verus Signed Message:\n',
-    bech32: 'vtbc',
-    bip32: {
-        public: 0x043587cf,
-        private: 0x04358394
-    },
-    pubKeyHash: 0x6f,
-    scriptHash: 0xc4,
-    wif: 0xef,
-    consensusBranchId: {
-        1: 0x00,
-        2: 0x00,
-        3: 0x5ba81b19,
-        4: 0x76b809bb
-    },
-    coin: 'verustest'
-};
-
+const NETWORK = pkg.networks.verustest;
 // Constants
 const SATS_PER_COIN = 100000000;
 const DEFAULT_FEE = 20000; // 0.0002 VRSC fee
@@ -40,21 +23,35 @@ const DUST_THRESHOLD = 546;
  * @returns {Buffer} The output script
  */
 function addressToOutputScript(addr) {
-    const decoded = Address.fromBase58Check(addr);
-    if (decoded.version === NETWORK.pubKeyHash) {
-        return payments.p2pkh({ 
-            hash: decoded.hash,
-            network: NETWORK 
-        }).output;
-    } else if (decoded.version === NETWORK.scriptHash) {
-        return payments.p2sh({ 
-            hash: decoded.hash,
-            network: NETWORK 
-        }).output;
+    try {
+        const decoded = Address.fromBase58Check(addr);
+        if (decoded.version === NETWORK.pubKeyHash) {
+            return payments.p2pkh({ 
+                hash: decoded.hash,
+                network: NETWORK 
+            }).output;
+        } else if (decoded.version === NETWORK.scriptHash) {
+            return payments.p2sh({ 
+                hash: decoded.hash,
+                network: NETWORK 
+            }).output;
+        }
+    } catch (e) {
+        // Normalize the address to lower case before Bech32 decoding
+        try {
+            const decodedBech32 = Address.fromBech32(addr.toLowerCase());
+            if (decodedBech32.prefix === NETWORK.bech32) {
+                return payments.p2wpkh({ 
+                    hash: decodedBech32.data,
+                    network: NETWORK 
+                }).output;
+            }
+        } catch (e) {
+            throw new Error('Unsupported address type');
+        }
     }
     throw new Error('Unsupported address type');
 }
-
 /**
  * Select optimal UTXOs for a transaction
  * @param {Array} utxos - Available UTXOs
@@ -155,6 +152,7 @@ export async function sendCurrency(fromAddress, toAddress, amount, privateKeyWIF
         // Create transaction builder
         const txBuilder = new TransactionBuilder(NETWORK);
         txBuilder.setVersion(4);
+        txBuilder.setVersionGroupId(0x892f2085); // Overwinter version group ID
         
         // Add inputs
         for (const input of coinSelection.inputs) {
@@ -201,7 +199,6 @@ export async function sendCurrency(fromAddress, toAddress, amount, privateKeyWIF
         throw error;
     }
 }
-
 /**
  * Estimate transaction fee
  * @param {string} fromAddress - Sender's address

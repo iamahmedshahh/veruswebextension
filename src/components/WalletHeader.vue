@@ -1,9 +1,5 @@
 <template>
   <header class="wallet-header">
-    <div class="logo-container">
-      <img :src="VerusLogo" alt="Verus Logo" class="logo" />
-      <span class="wallet-name">Verus Wallet</span>
-    </div>
     <div class="actions-container">
       <div class="network-status">
         <span class="status-dot" :class="{ 'connected': isConnected }"></span>
@@ -132,25 +128,22 @@
 </template>
 
 <script setup>
-import { ref, onMounted, watch } from 'vue'
+import { ref, onMounted, watch, computed } from 'vue'
 import { useStore } from 'vuex'
 import browser from 'webextension-polyfill'
 import QRCode from 'qrcode'
-import VerusLogo from '../assets/verus-logo.svg'
 import ConnectedSites from './ConnectedSites.vue'
 
 const store = useStore()
-const isConnected = ref(false)
-const networkName = ref('Verus Testnet')
 const showDonateModal = ref(false)
+const isConnected = ref(false)
+const networkName = ref('Testnet')
 const donateAddress = 'RRQHGqgKivuwvWgeWAvTnGg5VJr1aWNRx5'
 const connectedSitesRef = ref(null)
 const activeTab = ref('vrsc')
-
-// QR code data URLs
-const btcQrCode = ref('')
-const segwitQrCode = ref('')
-const vrscQrCode = ref('')
+const btcQrCode = ref(null)
+const segwitQrCode = ref(null)
+const vrscQrCode = ref(null)
 
 const props = defineProps({
   isLocked: {
@@ -256,22 +249,6 @@ onMounted(async () => {
   padding: 0.75rem 1rem;
   background: var(--background-color);
   border-bottom: 1px solid var(--border-color);
-}
-
-.logo-container {
-  display: flex;
-  align-items: center;
-  gap: 0.5rem;
-}
-
-.logo {
-  height: 24px;
-  width: auto;
-}
-
-.wallet-name {
-  font-weight: 600;
-  font-size: 1.125rem;
 }
 
 .actions-container {

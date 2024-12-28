@@ -1,6 +1,7 @@
 import { createStore } from 'vuex';
 import wallet from './modules/wallet';
 import currencies from './modules/currencies';
+import identity from './modules/identity';
 
 export default createStore({
     state: {
@@ -26,6 +27,7 @@ export default createStore({
     },
     modules: {
         wallet,
-        currencies
+        currencies,
+        identity
     }
 });
