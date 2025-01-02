@@ -2,8 +2,8 @@ export function getManifest() {
   return {
     manifest_version: 3,
     name: 'Verus Web Wallet',
-    description: 'A secure web wallet for Verus cryptocurrency',
-    version: '1.0.0',
+    description: 'Worlds first secure web wallet for Verus Blockchain empowering layer 1 tech',
+    version: '1.0.1',
     icons: {
       "16": "icons/icon16.png",
       "48": "icons/icon48.png",
