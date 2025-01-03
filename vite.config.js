@@ -24,8 +24,8 @@ export default defineConfig({
       manifest: {
         manifest_version: 3,
         name: 'Verus Web Wallet',
-        version: '0.0.1',
-        description: 'A secure web wallet for Verus cryptocurrency',
+        version: '0.0.2',
+        description: 'Worlds first secure web wallet for Verus Blockchain empowering layer 1 tech',
         permissions: [
           'storage',
           'activeTab'

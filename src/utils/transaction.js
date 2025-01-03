@@ -10,8 +10,8 @@ global.Buffer = Buffer;
 const { ECPair, TransactionBuilder, address: Address, payments } = pkg;
 
 // Network configuration for Verus Testnet
+const NETWORK = pkg.networks.verustest;  // Use the default network config without modifications
 
-const NETWORK = pkg.networks.verustest;
 // Constants
 const SATS_PER_COIN = 100000000;
 const DEFAULT_FEE = 20000; // 0.0002 VRSC fee
@@ -24,34 +24,16 @@ const DUST_THRESHOLD = 546;
  */
 function addressToOutputScript(addr) {
     try {
-        const decoded = Address.fromBase58Check(addr);
-        if (decoded.version === NETWORK.pubKeyHash) {
-            return payments.p2pkh({ 
-                hash: decoded.hash,
-                network: NETWORK 
-            }).output;
-        } else if (decoded.version === NETWORK.scriptHash) {
-            return payments.p2sh({ 
-                hash: decoded.hash,
-                network: NETWORK 
-            }).output;
-        }
+        console.log('Decoding address:', addr);
+        // Instead of using payments API, we'll directly add the address as output
+        // The TransactionBuilder will handle the script creation internally
+        return addr;
     } catch (e) {
-        // Normalize the address to lower case before Bech32 decoding
-        try {
-            const decodedBech32 = Address.fromBech32(addr.toLowerCase());
-            if (decodedBech32.prefix === NETWORK.bech32) {
-                return payments.p2wpkh({ 
-                    hash: decodedBech32.data,
-                    network: NETWORK 
-                }).output;
-            }
-        } catch (e) {
-            throw new Error('Unsupported address type');
-        }
+        console.error('Error processing address:', addr, e);
+        throw e;
     }
-    throw new Error('Unsupported address type');
 }
+
 /**
  * Select optimal UTXOs for a transaction
  * @param {Array} utxos - Available UTXOs
@@ -61,7 +43,7 @@ function addressToOutputScript(addr) {
  */
 function selectCoins(utxos, targetAmount, feePerByte) {
     // Sort UTXOs by value, descending
-    const sortedUtxos = [...utxos].sort((a, b) => b.value - a.value);
+    const sortedUtxos = [...utxos].sort((a, b) => Number(b.value) - Number(a.value));
     
     let selectedUtxos = [];
     let selectedAmount = 0;
@@ -74,21 +56,21 @@ function selectCoins(utxos, targetAmount, feePerByte) {
     // First try to find a single UTXO that covers the amount
     const singleUtxo = sortedUtxos.find(utxo => {
         const estimatedFee = estimateSize(1) * feePerByte;
-        return utxo.value >= targetAmount + estimatedFee;
+        return Number(utxo.value) >= targetAmount + estimatedFee;
     });
     
     if (singleUtxo) {
         return {
             inputs: [singleUtxo],
             fee: estimateSize(1) * feePerByte,
-            change: singleUtxo.value - targetAmount - (estimateSize(1) * feePerByte)
+            change: Number(singleUtxo.value) - targetAmount - (estimateSize(1) * feePerByte)
         };
     }
     
     // If no single UTXO works, accumulate multiple UTXOs
     for (const utxo of sortedUtxos) {
         selectedUtxos.push(utxo);
-        selectedAmount += utxo.value;
+        selectedAmount += Number(utxo.value);
         
         const estimatedFee = estimateSize(selectedUtxos.length) * feePerByte;
         if (selectedAmount >= targetAmount + estimatedFee) {
@@ -160,13 +142,11 @@ export async function sendCurrency(fromAddress, toAddress, amount, privateKeyWIF
         }
 
         // Add recipient output
-        const recipientScript = addressToOutputScript(toAddress);
-        txBuilder.addOutput(recipientScript, amountSats);
+        txBuilder.addOutput(toAddress, amountSats);
 
         // Add change output if needed
         if (coinSelection.change > DUST_THRESHOLD) {
-            const changeScript = addressToOutputScript(fromAddress);
-            txBuilder.addOutput(changeScript, coinSelection.change);
+            txBuilder.addOutput(fromAddress, coinSelection.change);
         }
 
         // Sign all inputs
@@ -174,13 +154,13 @@ export async function sendCurrency(fromAddress, toAddress, amount, privateKeyWIF
         
         for (let i = 0; i < coinSelection.inputs.length; i++) {
             const input = coinSelection.inputs[i];
-            txBuilder.sign({
-                prevOutScriptType: 'p2pkh',
-                vin: i,
-                keyPair: keyPair,
-                value: input.value,
-                network: NETWORK
-            });
+            txBuilder.sign(
+                i,                          // vin
+                keyPair,                    // keyPair
+                null,                       // redeemScript (not needed for P2PKH)
+                0x01,                       // hashType
+                Number(input.value)         // value as number, not BigInteger
+            );
         }
 
         // Build and broadcast
@@ -199,6 +179,7 @@ export async function sendCurrency(fromAddress, toAddress, amount, privateKeyWIF
         throw error;
     }
 }
+
 /**
  * Estimate transaction fee
  * @param {string} fromAddress - Sender's address
