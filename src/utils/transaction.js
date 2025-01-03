@@ -1,6 +1,7 @@
 import { makeRPCCall } from './verus-rpc';
 import pkg from '@bitgo/utxo-lib';
 import { Buffer } from 'buffer';
+import { BN } from 'bn.js';
 import 'core-js/stable';
 import 'regenerator-runtime/runtime';
 
@@ -10,12 +11,31 @@ global.Buffer = Buffer;
 const { ECPair, TransactionBuilder, address: Address, payments } = pkg;
 
 // Network configuration for Verus Testnet
-const NETWORK = pkg.networks.verustest;  // Use the default network config without modifications
+const NETWORK = pkg.networks.verustest;
 
 // Constants
-const SATS_PER_COIN = 100000000;
-const DEFAULT_FEE = 20000; // 0.0002 VRSC fee
-const DUST_THRESHOLD = 546;
+const SATS_PER_COIN = new BN('100000000', 10);
+const DEFAULT_FEE = new BN('20000', 10); // 0.0002 VRSC fee
+const DUST_THRESHOLD = new BN('546', 10);
+
+/**
+ * Convert VRSC amount to satoshis
+ * @param {number|string} amount - Amount in VRSC
+ * @returns {BN} Amount in satoshis
+ */
+function toSatoshis(amount) {
+    return new BN(amount).mul(SATS_PER_COIN);
+}
+
+/**
+ * Convert satoshis to VRSC amount
+ * @param {BN|string} satoshis - Amount in satoshis
+ * @returns {string} Amount in VRSC
+ */
+function fromSatoshis(satoshis) {
+    const bn = new BN(satoshis);
+    return bn.div(SATS_PER_COIN).toString();
+}
 
 /**
  * Convert address to output script
@@ -37,16 +57,25 @@ function addressToOutputScript(addr) {
 /**
  * Select optimal UTXOs for a transaction
  * @param {Array} utxos - Available UTXOs
- * @param {number} targetAmount - Amount to send in satoshis
+ * @param {BN} targetAmount - Amount to send in satoshis
  * @param {number} feePerByte - Fee per byte in satoshis
  * @returns {Object} Selected UTXOs and change amount
  */
 function selectCoins(utxos, targetAmount, feePerByte) {
+    console.log('Selecting coins for amount:', targetAmount.toString());
+    console.log('Available UTXOs:', utxos);
+
     // Sort UTXOs by value, descending
-    const sortedUtxos = [...utxos].sort((a, b) => Number(b.value) - Number(a.value));
+    const sortedUtxos = [...utxos].sort((a, b) => {
+        const aValue = new BN(a.satoshis);
+        const bValue = new BN(b.satoshis);
+        return bValue.sub(aValue).toNumber();
+    });
+    
+    console.log('Sorted UTXOs:', sortedUtxos);
     
     let selectedUtxos = [];
-    let selectedAmount = 0;
+    let selectedAmount = new BN(0);
     
     // Estimate transaction size (simplified)
     const estimateSize = (inputCount, outputCount = 2) => {
@@ -55,33 +84,64 @@ function selectCoins(utxos, targetAmount, feePerByte) {
     
     // First try to find a single UTXO that covers the amount
     const singleUtxo = sortedUtxos.find(utxo => {
-        const estimatedFee = estimateSize(1) * feePerByte;
-        return Number(utxo.value) >= targetAmount + estimatedFee;
+        const utxoValue = new BN(utxo.satoshis);
+        const estimatedFee = new BN(estimateSize(1) * feePerByte);
+        const total = targetAmount.add(estimatedFee);
+        console.log('Checking UTXO:', {
+            utxoValue: utxoValue.toString(),
+            needed: total.toString(),
+            sufficient: utxoValue.gte(total)
+        });
+        return utxoValue.gte(total);
     });
     
     if (singleUtxo) {
+        console.log('Found single UTXO that covers amount');
+        const estimatedFee = new BN(estimateSize(1) * feePerByte);
+        const utxoValue = new BN(singleUtxo.satoshis);
         return {
             inputs: [singleUtxo],
-            fee: estimateSize(1) * feePerByte,
-            change: Number(singleUtxo.value) - targetAmount - (estimateSize(1) * feePerByte)
+            fee: estimatedFee,
+            change: utxoValue.sub(targetAmount).sub(estimatedFee)
         };
     }
+    
+    console.log('No single UTXO found, trying multiple UTXOs');
     
     // If no single UTXO works, accumulate multiple UTXOs
     for (const utxo of sortedUtxos) {
         selectedUtxos.push(utxo);
-        selectedAmount += Number(utxo.value);
+        const utxoValue = new BN(utxo.satoshis);
+        selectedAmount = selectedAmount.add(utxoValue);
         
-        const estimatedFee = estimateSize(selectedUtxos.length) * feePerByte;
-        if (selectedAmount >= targetAmount + estimatedFee) {
+        console.log('Added UTXO:', {
+            value: utxoValue.toString(),
+            totalSelected: selectedAmount.toString()
+        });
+        
+        const estimatedFee = new BN(estimateSize(selectedUtxos.length) * feePerByte);
+        const total = targetAmount.add(estimatedFee);
+        
+        console.log('Current status:', {
+            selected: selectedAmount.toString(),
+            needed: total.toString(),
+            sufficient: selectedAmount.gte(total)
+        });
+        
+        if (selectedAmount.gte(total)) {
+            console.log('Found sufficient UTXOs');
             return {
                 inputs: selectedUtxos,
                 fee: estimatedFee,
-                change: selectedAmount - targetAmount - estimatedFee
+                change: selectedAmount.sub(targetAmount).sub(estimatedFee)
             };
         }
     }
     
+    console.log('Insufficient funds:', {
+        available: selectedAmount.toString(),
+        needed: targetAmount.toString()
+    });
     throw new Error('Insufficient funds for transaction');
 }
 
@@ -103,26 +163,32 @@ export async function sendCurrency(fromAddress, toAddress, amount, privateKeyWIF
         if (!toAddress) throw new Error('Recipient address is required');
         if (!amount || amount <= 0) throw new Error('Invalid amount');
 
+        // Convert amount to satoshis
+        const amountSats = toSatoshis(amount);
+        
         // Get UTXOs for the address
         const utxos = await makeRPCCall('getaddressutxos', [{
             addresses: [fromAddress]
         }]);
         
+        console.log('Raw UTXOs received:', utxos);
+        
         if (!utxos || utxos.length === 0) {
             throw new Error('No UTXOs available');
         }
 
-        // Convert amount to satoshis
-        const amountSats = Math.floor(amount * SATS_PER_COIN);
-        
         // Prepare UTXOs with correct format
         const preparedUtxos = utxos.map(utxo => ({
             txid: utxo.txid,
-            vout: utxo.outputIndex,
+            outputIndex: utxo.outputIndex,
             value: utxo.satoshis,
+            satoshis: utxo.satoshis,
             address: fromAddress
         }));
 
+        console.log('Prepared UTXOs:', preparedUtxos);
+        console.log('Target amount in satoshis:', amountSats.toString());
+        
         // Select coins for transaction
         const feePerByte = 1; // 1 sat/byte
         const coinSelection = selectCoins(preparedUtxos, amountSats, feePerByte);
@@ -133,20 +199,22 @@ export async function sendCurrency(fromAddress, toAddress, amount, privateKeyWIF
 
         // Create transaction builder
         const txBuilder = new TransactionBuilder(NETWORK);
+        
+        // Set version and version group ID for Verus
         txBuilder.setVersion(4);
-        txBuilder.setVersionGroupId(0x892f2085); // Overwinter version group ID
+        txBuilder.setVersionGroupId(0x892f2085);
         
         // Add inputs
         for (const input of coinSelection.inputs) {
-            txBuilder.addInput(input.txid, input.vout);
+            txBuilder.addInput(input.txid, input.outputIndex);
         }
 
         // Add recipient output
-        txBuilder.addOutput(toAddress, amountSats);
+        txBuilder.addOutput(toAddress, amountSats.toNumber());
 
         // Add change output if needed
-        if (coinSelection.change > DUST_THRESHOLD) {
-            txBuilder.addOutput(fromAddress, coinSelection.change);
+        if (coinSelection.change.gt(DUST_THRESHOLD)) {
+            txBuilder.addOutput(fromAddress, coinSelection.change.toNumber());
         }
 
         // Sign all inputs
@@ -159,7 +227,7 @@ export async function sendCurrency(fromAddress, toAddress, amount, privateKeyWIF
                 keyPair,                    // keyPair
                 null,                       // redeemScript (not needed for P2PKH)
                 0x01,                       // hashType
-                Number(input.value)         // value as number, not BigInteger
+                Number(input.satoshis)      // value as number
             );
         }
 
@@ -172,7 +240,7 @@ export async function sendCurrency(fromAddress, toAddress, amount, privateKeyWIF
         
         return { 
             txid,
-            fee: coinSelection.fee / SATS_PER_COIN
+            fee: fromSatoshis(coinSelection.fee)
         };
     } catch (error) {
         console.error('Error in sendCurrency:', error);
@@ -190,36 +258,42 @@ export async function sendCurrency(fromAddress, toAddress, amount, privateKeyWIF
  */
 export async function estimateFee(fromAddress, toAddress, amount, currency = 'VRSCTEST') {
     try {
-        const amountSats = Math.floor(amount * SATS_PER_COIN);
+        const amountSats = toSatoshis(amount);
         
         // Get UTXOs
         const utxos = await makeRPCCall('getaddressutxos', [{
             addresses: [fromAddress]
         }]);
         
+        console.log('Raw UTXOs received:', utxos);
+        
         if (!utxos || utxos.length === 0) {
-            return DEFAULT_FEE / SATS_PER_COIN;
+            return DEFAULT_FEE.toNumber() / SATS_PER_COIN.toNumber();
         }
 
         // Prepare UTXOs
         const preparedUtxos = utxos.map(utxo => ({
             txid: utxo.txid,
-            vout: utxo.outputIndex,
+            outputIndex: utxo.outputIndex,
             value: utxo.satoshis,
+            satoshis: utxo.satoshis,
             address: fromAddress
         }));
 
+        console.log('Prepared UTXOs:', preparedUtxos);
+        console.log('Target amount in satoshis:', amountSats.toString());
+        
         // Estimate fee using coin selection
         try {
             const feePerByte = 1; // 1 sat/byte
             const coinSelection = selectCoins(preparedUtxos, amountSats, feePerByte);
-            return coinSelection.fee / SATS_PER_COIN;
+            return fromSatoshis(coinSelection.fee);
         } catch (e) {
-            return DEFAULT_FEE / SATS_PER_COIN;
+            return DEFAULT_FEE.toNumber() / SATS_PER_COIN.toNumber();
         }
     } catch (error) {
         console.error('Error estimating fee:', error);
-        return DEFAULT_FEE / SATS_PER_COIN;
+        return DEFAULT_FEE.toNumber() / SATS_PER_COIN.toNumber();
     }
 }
 
