@@ -487,14 +487,14 @@ const actions = {
         try {
             commit('clearError');
             
-            // Check if we have the private key in WIF format in state
-            if (state.privateKeyWIF) {
-                return state.privateKeyWIF;
+            // Check if we have the private key in state
+            if (state.privateKey) {
+                return state.privateKey;
             }
             
             // If not in state, try to get it from storage
             const data = await storage.get('wallet');
-            if (!data.wallet || !data.wallet.privateKeyWIF) {
+            if (!data.wallet || !data.wallet.privateKey) {
                 throw new Error('Private key not found in wallet');
             }
             
@@ -502,11 +502,11 @@ const actions = {
             commit('setWalletData', {
                 address: state.address,
                 network: state.network,
-                privateKeyWIF: data.wallet.privateKeyWIF,
+                privateKey: data.wallet.privateKey,
                 mnemonic: data.wallet.mnemonic
             });
             
-            return data.wallet.privateKeyWIF;
+            return data.wallet.privateKey;
         } catch (error) {
             console.error('Failed to get private key:', error);
             commit('setError', error.message);
@@ -607,6 +607,13 @@ const mutations = {
     
     REMOVE_CONNECTED_SITE(state, origin) {
         state.connectedSites = state.connectedSites.filter(site => site.origin !== origin)
+    },
+    
+    setWalletData(state, walletData) {
+        if (walletData.address) state.address = walletData.address;
+        if (walletData.network) state.network = walletData.network;
+        if (walletData.privateKey) state.privateKey = walletData.privateKey;
+        if (walletData.mnemonic) state.mnemonic = walletData.mnemonic;
     },
 };
 

@@ -1,9 +1,9 @@
 import { Buffer } from 'buffer';
 import * as bitgo from '@bitgo/utxo-lib';
 import bip39 from 'bip39';
-import HDKey from 'hdkey';
 import BigInteger from 'bigi';
 import bcrypt from 'bcryptjs';
+import HDKey from 'hdkey';
 
 // Get the BitGo library instance
 const lib = bitgo.default;
@@ -25,36 +25,49 @@ export class WalletService {
      */
     static async generateWallet(mnemonic, password) {
         try {
-            // Generate mnemonic if not provided
+            // Generate mnemonic if not provided (24 words for extra security)
             if (!mnemonic) {
-                const entropy = crypto.randomBytes(16);
+                const entropy = crypto.randomBytes(32);
                 mnemonic = bip39.entropyToMnemonic(entropy);
             }
 
-            // Generate seed from mnemonic
+            // Convert mnemonic to seed
             const seed = await bip39.mnemonicToSeed(mnemonic);
-
+            
             // Create HD wallet
             const hdkey = HDKey.fromMasterSeed(seed);
             const childKey = hdkey.derive(BIP44_PATH);
             
-            // Create key pair from private key
-            const keyPair = lib.ECPair.makeRandom({ network: NETWORK });
-            keyPair.d = BigInteger.fromBuffer(childKey.privateKey);
+            // Get private key from derived path
+            const privateKeyBuffer = childKey.privateKey;
+            const privateKey = BigInteger.fromBuffer(privateKeyBuffer);
+            
+            // Create key pair using the library's ECPair class
+            const keyPair = new lib.ECPair(privateKey, null, { network: NETWORK });
             
             // Get WIF (Wallet Import Format)
             const privateKeyWIF = keyPair.toWIF();
 
-            // Get address using P2PKH script
+            // Generate P2PKH address
             const pubKeyHash = lib.crypto.hash160(keyPair.getPublicKeyBuffer());
-            const verusAddress = address.toBase58Check(pubKeyHash, NETWORK.pubKeyHash);
+            const scriptPubKey = lib.script.pubKeyHash.output.encode(pubKeyHash);
+            const verusAddress = lib.address.fromOutputScript(scriptPubKey, NETWORK);
+
+            // Verify address format
+            if (!verusAddress.startsWith('R')) {
+                throw new Error('Generated address does not start with R');
+            }
+
+            if (verusAddress.length !== 34) {
+                throw new Error('Generated address length is not 34 characters');
+            }
 
             // Hash password
             const hashedPassword = await this.hashPassword(password);
 
             return {
                 mnemonic,
-                privateKeyWIF,
+                privateKey: privateKeyWIF,
                 address: verusAddress,
                 hashedPassword
             };
@@ -65,41 +78,40 @@ export class WalletService {
     }
 
     /**
-     * Recover a wallet from mnemonic phrase
-     * @param {string} mnemonic The 24-word mnemonic phrase
-     * @param {string} password Password to encrypt the wallet
+     * Recover wallet from mnemonic phrase
+     * @param {string} mnemonic - Mnemonic phrase
+     * @param {string} password - Password to encrypt the wallet
      * @returns {Promise<Object>} Wallet data including privateKey (WIF) and address
      */
     static async recoverFromMnemonic(mnemonic, password) {
         try {
-            // Validate mnemonic
-            if (!bip39.validateMnemonic(mnemonic)) {
-                throw new Error('Invalid mnemonic phrase');
-            }
-
-            // Generate seed from mnemonic
+            // Convert mnemonic to seed
             const seed = await bip39.mnemonicToSeed(mnemonic);
-
+            
             // Create HD wallet
             const hdkey = HDKey.fromMasterSeed(seed);
             const childKey = hdkey.derive(BIP44_PATH);
             
-            // Create key pair from private key
-            const keyPair = lib.ECPair.makeRandom({ network: NETWORK });
-            keyPair.d = BigInteger.fromBuffer(childKey.privateKey);
+            // Get private key from derived path
+            const privateKeyBuffer = childKey.privateKey;
+            const privateKey = BigInteger.fromBuffer(privateKeyBuffer);
             
-            // Get WIF
+            // Create key pair using the library's ECPair class
+            const keyPair = new lib.ECPair(privateKey, null, { network: NETWORK });
+            
+            // Get WIF (Wallet Import Format)
             const privateKeyWIF = keyPair.toWIF();
 
-            // Get address using P2PKH script
+            // Generate P2PKH address
             const pubKeyHash = lib.crypto.hash160(keyPair.getPublicKeyBuffer());
-            const verusAddress = address.toBase58Check(pubKeyHash, NETWORK.pubKeyHash);
+            const scriptPubKey = lib.script.pubKeyHash.output.encode(pubKeyHash);
+            const verusAddress = lib.address.fromOutputScript(scriptPubKey, NETWORK);
 
             // Hash password
             const hashedPassword = await this.hashPassword(password);
 
             return {
-                privateKeyWIF,
+                privateKey: privateKeyWIF,
                 address: verusAddress,
                 hashedPassword
             };
@@ -117,12 +129,12 @@ export class WalletService {
     static async recoverFromWIF(wif) {
         try {
             // Create key pair from WIF
-            const keyPair = lib.ECPair.makeRandom({ network: NETWORK });
-            keyPair.d = BigInteger.fromBuffer(Buffer.from(wif, 'base64'));
+            const keyPair = lib.ECPair.fromWIF(wif, NETWORK);
             
             // Get address using P2PKH script
             const pubKeyHash = lib.crypto.hash160(keyPair.getPublicKeyBuffer());
-            const verusAddress = address.toBase58Check(pubKeyHash, NETWORK.pubKeyHash);
+            const scriptPubKey = lib.script.pubKeyHash.output.encode(pubKeyHash);
+            const verusAddress = lib.address.fromOutputScript(scriptPubKey, NETWORK);
 
             return {
                 address: verusAddress,
