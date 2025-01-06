@@ -3,6 +3,7 @@ import * as bitgo from '@bitgo/utxo-lib';
 import bip39 from 'bip39';
 import BigInteger from 'bigi';
 import bcrypt from 'bcryptjs';
+import sha256 from 'js-sha256';
 
 // Get the BitGo library instance
 const lib = bitgo.default;
@@ -12,8 +13,20 @@ const address = lib.address;
 // Network configuration for Verus
 const NETWORK = networks.verustest;
 
-// BIP44 path for Verus (using Bitcoin's coin type for now)
-const BIP44_PATH = "m/44'/0'/0'/0/0";
+function seedToPrivateKey(seed, iguana = true) {
+    // Create SHA256 hash of the seed
+    const hash = sha256.create().update(seed);
+    const bytes = hash.array();
+
+    // Iguana compatible conversion
+    if (iguana) {
+        bytes[0] &= 248;
+        bytes[31] &= 127;
+        bytes[31] |= 64;
+    }
+
+    return bytes;
+}
 
 export class WalletService {
     /**
@@ -30,23 +43,18 @@ export class WalletService {
                 mnemonic = bip39.entropyToMnemonic(entropy);
             }
 
-            // Convert mnemonic to seed
-            const seed = await bip39.mnemonicToSeed(mnemonic);
+            // Convert mnemonic to private key using sha256
+            const privateKeyBytes = seedToPrivateKey(mnemonic);
             
-            // Create master node
-            const masterNode = lib.bip32.fromSeed(seed, NETWORK);
-            
-            // Derive the child node
-            const childNode = masterNode.derivePath(BIP44_PATH);
-            
-            // Create key pair from the child node's private key
-            const keyPair = lib.ECPair.fromPrivateKey(childNode.privateKey, { network: NETWORK });
+            // Create key pair using private key bytes
+            const privateKey = BigInteger.fromBuffer(Buffer.from(privateKeyBytes));
+            const keyPair = new lib.ECPair(privateKey, null, { network: NETWORK });
             
             // Get WIF (Wallet Import Format)
             const privateKeyWIF = keyPair.toWIF();
 
             // Generate P2PKH address
-            const pubKeyHash = lib.crypto.hash160(keyPair.publicKey);
+            const pubKeyHash = lib.crypto.hash160(keyPair.getPublicKeyBuffer());
             const scriptPubKey = lib.script.pubKeyHash.output.encode(pubKeyHash);
             const verusAddress = lib.address.fromOutputScript(scriptPubKey, NETWORK);
 
@@ -82,23 +90,18 @@ export class WalletService {
      */
     static async recoverFromMnemonic(mnemonic, password) {
         try {
-            // Convert mnemonic to seed
-            const seed = await bip39.mnemonicToSeed(mnemonic);
+            // Convert mnemonic to private key using sha256
+            const privateKeyBytes = seedToPrivateKey(mnemonic);
             
-            // Create master node
-            const masterNode = lib.bip32.fromSeed(seed, NETWORK);
-            
-            // Derive the child node
-            const childNode = masterNode.derivePath(BIP44_PATH);
-            
-            // Create key pair from the child node's private key
-            const keyPair = lib.ECPair.fromPrivateKey(childNode.privateKey, { network: NETWORK });
+            // Create key pair using private key bytes
+            const privateKey = BigInteger.fromBuffer(Buffer.from(privateKeyBytes));
+            const keyPair = new lib.ECPair(privateKey, null, { network: NETWORK });
             
             // Get WIF (Wallet Import Format)
             const privateKeyWIF = keyPair.toWIF();
 
             // Generate P2PKH address
-            const pubKeyHash = lib.crypto.hash160(keyPair.publicKey);
+            const pubKeyHash = lib.crypto.hash160(keyPair.getPublicKeyBuffer());
             const scriptPubKey = lib.script.pubKeyHash.output.encode(pubKeyHash);
             const verusAddress = lib.address.fromOutputScript(scriptPubKey, NETWORK);
 
@@ -117,8 +120,8 @@ export class WalletService {
     }
 
     /**
-     * Recover a wallet from WIF
-     * @param {string} wif The wallet import format string
+     * Recover wallet from WIF private key
+     * @param {string} wif - Private key in WIF format
      * @returns {Promise<Object>} Wallet data including address
      */
     static async recoverFromWIF(wif) {
@@ -127,48 +130,38 @@ export class WalletService {
             const keyPair = lib.ECPair.fromWIF(wif, NETWORK);
             
             // Get address using P2PKH script
-            const pubKeyHash = lib.crypto.hash160(keyPair.publicKey);
+            const pubKeyHash = lib.crypto.hash160(keyPair.getPublicKeyBuffer());
             const scriptPubKey = lib.script.pubKeyHash.output.encode(pubKeyHash);
             const verusAddress = lib.address.fromOutputScript(scriptPubKey, NETWORK);
 
             return {
-                address: verusAddress,
-                network: NETWORK.coin
+                privateKey: wif,
+                address: verusAddress
             };
         } catch (error) {
-            console.error('Failed to recover wallet from WIF:', error);
-            throw new Error('WIF recovery failed: ' + error.message);
+            console.error('Error recovering from WIF:', error);
+            throw error;
         }
     }
 
     /**
-     * Hash a password for secure storage
-     * @param {string} password The password to hash
-     * @returns {Promise<string>} The hashed password
+     * Hash a password using bcrypt
+     * @param {string} password - Password to hash
+     * @returns {Promise<string>} Hashed password
      */
     static async hashPassword(password) {
-        try {
-            const salt = await bcrypt.genSalt(10);
-            const hash = await bcrypt.hash(password, salt);
-            return hash;
-        } catch (error) {
-            console.error('Failed to hash password:', error);
-            throw new Error('Password hashing failed');
-        }
+        const salt = await bcrypt.genSalt(10);
+        const hash = await bcrypt.hash(password, salt);
+        return hash;
     }
 
     /**
      * Verify a password against a hash
-     * @param {string} password The password to verify
-     * @param {string} hash The hash to verify against
-     * @returns {Promise<boolean>} True if password matches, false otherwise
+     * @param {string} password - Password to verify
+     * @param {string} hash - Hash to verify against
+     * @returns {Promise<boolean>} True if password matches hash
      */
     static async verifyPassword(password, hash) {
-        try {
-            return await bcrypt.compare(password, hash);
-        } catch (error) {
-            console.error('Failed to verify password:', error);
-            throw new Error('Password verification failed');
-        }
+        return await bcrypt.compare(password, hash);
     }
 }
