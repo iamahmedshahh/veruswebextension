@@ -3,7 +3,6 @@ import * as bitgo from '@bitgo/utxo-lib';
 import bip39 from 'bip39';
 import BigInteger from 'bigi';
 import bcrypt from 'bcryptjs';
-import HDKey from 'hdkey';
 
 // Get the BitGo library instance
 const lib = bitgo.default;
@@ -34,22 +33,20 @@ export class WalletService {
             // Convert mnemonic to seed
             const seed = await bip39.mnemonicToSeed(mnemonic);
             
-            // Create HD wallet
-            const hdkey = HDKey.fromMasterSeed(seed);
-            const childKey = hdkey.derive(BIP44_PATH);
+            // Create master node
+            const masterNode = lib.bip32.fromSeed(seed, NETWORK);
             
-            // Get private key from derived path
-            const privateKeyBuffer = childKey.privateKey;
-            const privateKey = BigInteger.fromBuffer(privateKeyBuffer);
+            // Derive the child node
+            const childNode = masterNode.derivePath(BIP44_PATH);
             
-            // Create key pair using the library's ECPair class
-            const keyPair = new lib.ECPair(privateKey, null, { network: NETWORK });
+            // Create key pair from the child node's private key
+            const keyPair = lib.ECPair.fromPrivateKey(childNode.privateKey, { network: NETWORK });
             
             // Get WIF (Wallet Import Format)
             const privateKeyWIF = keyPair.toWIF();
 
             // Generate P2PKH address
-            const pubKeyHash = lib.crypto.hash160(keyPair.getPublicKeyBuffer());
+            const pubKeyHash = lib.crypto.hash160(keyPair.publicKey);
             const scriptPubKey = lib.script.pubKeyHash.output.encode(pubKeyHash);
             const verusAddress = lib.address.fromOutputScript(scriptPubKey, NETWORK);
 
@@ -88,22 +85,20 @@ export class WalletService {
             // Convert mnemonic to seed
             const seed = await bip39.mnemonicToSeed(mnemonic);
             
-            // Create HD wallet
-            const hdkey = HDKey.fromMasterSeed(seed);
-            const childKey = hdkey.derive(BIP44_PATH);
+            // Create master node
+            const masterNode = lib.bip32.fromSeed(seed, NETWORK);
             
-            // Get private key from derived path
-            const privateKeyBuffer = childKey.privateKey;
-            const privateKey = BigInteger.fromBuffer(privateKeyBuffer);
+            // Derive the child node
+            const childNode = masterNode.derivePath(BIP44_PATH);
             
-            // Create key pair using the library's ECPair class
-            const keyPair = new lib.ECPair(privateKey, null, { network: NETWORK });
+            // Create key pair from the child node's private key
+            const keyPair = lib.ECPair.fromPrivateKey(childNode.privateKey, { network: NETWORK });
             
             // Get WIF (Wallet Import Format)
             const privateKeyWIF = keyPair.toWIF();
 
             // Generate P2PKH address
-            const pubKeyHash = lib.crypto.hash160(keyPair.getPublicKeyBuffer());
+            const pubKeyHash = lib.crypto.hash160(keyPair.publicKey);
             const scriptPubKey = lib.script.pubKeyHash.output.encode(pubKeyHash);
             const verusAddress = lib.address.fromOutputScript(scriptPubKey, NETWORK);
 
@@ -132,7 +127,7 @@ export class WalletService {
             const keyPair = lib.ECPair.fromWIF(wif, NETWORK);
             
             // Get address using P2PKH script
-            const pubKeyHash = lib.crypto.hash160(keyPair.getPublicKeyBuffer());
+            const pubKeyHash = lib.crypto.hash160(keyPair.publicKey);
             const scriptPubKey = lib.script.pubKeyHash.output.encode(pubKeyHash);
             const verusAddress = lib.address.fromOutputScript(scriptPubKey, NETWORK);
 

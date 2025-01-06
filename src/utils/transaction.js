@@ -4,6 +4,7 @@ import { makeRPCCall } from './verus-rpc';
 import { EVALS } from 'verus-typescript-primitives';
 import 'core-js/stable';
 import 'regenerator-runtime/runtime';
+import BigInteger from 'bigi';
 
 // Polyfill Buffer for browser compatibility
 global.Buffer = Buffer;
@@ -33,6 +34,15 @@ function toSatoshis(amount) {
  */
 function fromSatoshis(satoshis) {
     return satoshis / SATS_PER_COIN;
+}
+
+/**
+ * Convert number to BigInteger
+ * @param {number} value - Value to convert
+ * @returns {BigInteger} BigInteger value
+ */
+function toBigInteger(value) {
+    return BigInteger.fromBuffer(Buffer.from(value.toString(16).padStart(16, '0'), 'hex'));
 }
 
 /**
@@ -116,13 +126,13 @@ async function sendCurrency(fromAddressOrParams, toAddress, amount, privateKeyWI
             throw new Error(`Insufficient funds. Required: ${fromSatoshis(amountSats + fee)} ${params.currency}, Available: ${fromSatoshis(runningTotal)} ${params.currency}`);
         }
 
-        // Add recipient output
-        txBuilder.addOutput(params.toAddress, amountSats);
+        // Add recipient output with BigInteger conversion
+        txBuilder.addOutput(params.toAddress, toBigInteger(amountSats));
 
         // Calculate and add change output
         const changeAmount = runningTotal - amountSats - fee;
         if (changeAmount > 546) { // Dust threshold
-            txBuilder.addOutput(params.fromAddress, changeAmount);
+            txBuilder.addOutput(params.fromAddress, toBigInteger(changeAmount));
             console.log('Change output added:', fromSatoshis(changeAmount), params.currency);
         }
 
@@ -134,7 +144,7 @@ async function sendCurrency(fromAddressOrParams, toAddress, amount, privateKeyWI
                 keyPair,
                 null,
                 Transaction.SIGHASH_ALL,
-                relevantUtxos[i].satoshis
+                toBigInteger(relevantUtxos[i].satoshis)
             );
         }
 
@@ -192,15 +202,15 @@ async function estimateFee(fromAddress, toAddress, amount, currency = 'VRSCTEST'
 
         // Add recipient output
         const amountSats = toSatoshis(amount);
-        txBuilder.addOutput(toAddress, amountSats);
+        txBuilder.addOutput(toAddress, toBigInteger(amountSats));
 
         // Add change output
-        txBuilder.addOutput(fromAddress, 1000); // Dummy change amount
+        txBuilder.addOutput(fromAddress, toBigInteger(1000)); // Dummy change amount
 
         // Estimate fee based on transaction size
         const dummyKeyPair = ECPair.makeRandom({ network: NETWORK });
         for (let i = 0; i < relevantUtxos.length; i++) {
-            txBuilder.sign(i, dummyKeyPair, null, Transaction.SIGHASH_ALL, relevantUtxos[i].satoshis);
+            txBuilder.sign(i, dummyKeyPair, null, Transaction.SIGHASH_ALL, toBigInteger(relevantUtxos[i].satoshis));
         }
 
         const tx = txBuilder.build();
