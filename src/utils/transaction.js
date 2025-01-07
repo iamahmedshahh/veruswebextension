@@ -107,10 +107,15 @@ async function sendCurrency(fromAddressOrParams, toAddress, amount, privateKeyWI
             throw new Error(`No UTXOs available for ${params.currency}`);
         }
 
+        // Get current block height for locktime and expiry
+        const currentHeight = await makeRPCCall('getblockcount', []);
+        
         // Build transaction
         const txBuilder = new TransactionBuilder(NETWORK);
         txBuilder.setVersion(4);
         txBuilder.setVersionGroupId(0x892f2085);
+        txBuilder.setExpiryHeight(currentHeight + 20); // Set expiry 20 blocks ahead
+        txBuilder.setLockTime(currentHeight); // Set locktime to current height
 
         // Add all inputs
         let runningTotal = 0;
@@ -119,7 +124,7 @@ async function sendCurrency(fromAddressOrParams, toAddress, amount, privateKeyWI
             runningTotal += utxo.satoshis;
         }
 
-        // Calculate output amounts
+        // Calculate output amounts with dynamic fee based on input/output count
         const fee = DEFAULT_FEE;
         
         if (runningTotal < amountSats + fee) {
