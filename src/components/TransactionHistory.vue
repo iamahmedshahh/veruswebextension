@@ -1,6 +1,8 @@
 <script setup>
-import { ref, computed, defineProps } from 'vue'
+import { ref, computed, defineProps, onMounted } from 'vue'
+import { useStore } from 'vuex'
 
+const store = useStore()
 const props = defineProps({
   currency: {
     type: String,
@@ -8,27 +10,17 @@ const props = defineProps({
   }
 })
 
-// Mock data - will be replaced with real transactions later
-const transactions = ref([
-  {
-    id: 1,
-    type: 'received',
-    amount: `100 ${props.currency}`,
-    from: 'tX...abc',
-    to: 'tV...xyz',
-    timestamp: '2024-01-20 10:30',
-    status: 'confirmed'
-  },
-  {
-    id: 2,
-    type: 'sent',
-    amount: `50 ${props.currency}`,
-    from: 'tV...xyz',
-    to: 'tA...123',
-    timestamp: '2024-01-19 15:45',
-    status: 'confirmed'
-  }
-])
+// Load transactions from store
+onMounted(() => {
+  store.dispatch('transactions/loadTransactions')
+})
+
+const transactions = computed(() => store.getters['transactions/getTransactions'](props.currency))
+
+const openTxInExplorer = (txid) => {
+  const url = `https://testex.verus.io/tx/${txid}`
+  window.open(url, '_blank')
+}
 
 // Later this will be connected to real transaction data from your store
 const filteredTransactions = computed(() => transactions.value)
@@ -37,8 +29,14 @@ const filteredTransactions = computed(() => transactions.value)
 <template>
   <div class="history-container">
     <h3 class="history-title">Recent Transactions</h3>
-    <div class="transactions-list">
-      <div v-for="tx in filteredTransactions" :key="tx.id" class="transaction-item">
+    <div v-if="transactions.length === 0" class="empty-state">
+      No transactions yet
+    </div>
+    <div v-else class="transactions-list">
+      <div v-for="tx in transactions" 
+           :key="tx.txid" 
+           class="transaction-item"
+           @click="openTxInExplorer(tx.txid)">
         <div class="tx-icon" :class="tx.type">
           {{ tx.type === 'received' ? '↓' : '↑' }}
         </div>
@@ -50,6 +48,9 @@ const filteredTransactions = computed(() => transactions.value)
           <div class="tx-secondary">
             <span class="tx-date">{{ tx.timestamp }}</span>
             <span class="tx-status" :class="tx.status">{{ tx.status }}</span>
+          </div>
+          <div class="tx-id">
+            {{ tx.txid.substring(0, 8) }}...{{ tx.txid.substring(tx.txid.length - 8) }}
           </div>
         </div>
       </div>
@@ -82,10 +83,16 @@ const filteredTransactions = computed(() => transactions.value)
   align-items: center;
   padding: 1rem;
   border-bottom: 1px solid var(--border-color);
+  cursor: pointer;
+  transition: background-color 0.2s;
 }
 
 .transaction-item:last-child {
   border-bottom: none;
+}
+
+.transaction-item:hover {
+  background-color: rgba(0, 0, 0, 0.02);
 }
 
 .tx-icon {
@@ -144,5 +151,18 @@ const filteredTransactions = computed(() => transactions.value)
 
 .tx-status.pending {
   color: #f39c12;
+}
+
+.tx-id {
+  font-size: 0.8rem;
+  color: var(--text-secondary);
+  margin-top: 0.25rem;
+}
+
+.empty-state {
+  text-align: center;
+  padding: 2rem;
+  color: var(--text-secondary);
+  font-style: italic;
 }
 </style>

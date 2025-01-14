@@ -20,9 +20,10 @@ The goal is to make a full fledge browser extension wallet for Verus cryptocurre
 - ✅ Connection with dApps and getting wallet address and balance
 - ✅ Basic wallet creation and management
 - ✅ Receive Testnet Currencies and VRSCTEST transactions
-- ✅ Send is undergo and will be up soon (See test folder to check the working send on CLI)
+- ✅ Send VRSCTEST
 - ✅ Secure key storage
-
+- ✅ Transaction History
+- ✅ Clean and Intuitive UI
 
 ### Next Milestone
 - 🔄 MetaMask-style transaction signing UI.

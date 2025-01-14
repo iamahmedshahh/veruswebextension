@@ -23,9 +23,9 @@ export default defineConfig({
     webExtension({
       manifest: {
         manifest_version: 3,
-        name: 'Verus Web Wallet',
-        version: '0.0.2',
-        description: 'Worlds first secure web wallet for Verus Blockchain empowering layer 1 tech',
+        name: 'Verus Web Wallet (TestNet)',
+        version: '0.0.3',
+        description: 'Help me make the Worlds first secure web wallet for Layer 1 Blockchain',
         permissions: [
           'storage',
           'activeTab'
@@ -76,21 +76,23 @@ export default defineConfig({
     outDir: 'dist',
     emptyOutDir: true,
     sourcemap: process.env.NODE_ENV === 'development',
+    minify: false,
     rollupOptions: {
       input: {
         popup: path.resolve(__dirname, 'popup.html'),
         provider: path.resolve(__dirname, 'src/provider.js')
       },
       output: {
+        preserveModules: true,
+        preserveModulesRoot: 'src',
         entryFileNames: (chunkInfo) => {
-          // Keep provider.js name as is
           if (chunkInfo.name === 'provider') {
             return '[name].js';
           }
-          // Hash other files
           return 'assets/[name]-[hash].js';
         }
-      }
+      },
+      preserveEntrySignatures: 'strict',
     }
   }
 });

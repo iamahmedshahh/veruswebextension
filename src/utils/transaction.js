@@ -5,6 +5,7 @@ import { EVALS } from 'verus-typescript-primitives';
 import 'core-js/stable';
 import 'regenerator-runtime/runtime';
 import BigInteger from 'bigi';
+import { store } from '../store/index.js';
 
 // Polyfill Buffer for browser compatibility
 global.Buffer = Buffer;
@@ -164,6 +165,22 @@ async function sendCurrency(fromAddressOrParams, toAddress, amount, privateKey, 
         // Broadcast transaction
         const txid = await makeRPCCall('sendrawtransaction', [txHex]);
         console.log('Transaction sent:', txid);
+
+        // Store transaction in store
+        const transactionData = {
+            txid,
+            type: 'sent',
+            amount: params.amount,
+            currency: params.currency,
+            from: params.fromAddress,
+            to: params.toAddress,
+            timestamp: new Date().toISOString(),
+            status: 'confirmed'
+        };
+        
+        store.dispatch('transactions/addTransaction', transactionData);
+        console.log('Transaction stored:', transactionData);
+
         return { txid };
     } catch (error) {
         console.error('Error in sendCurrency:', error);

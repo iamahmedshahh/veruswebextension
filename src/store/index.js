@@ -2,8 +2,9 @@ import { createStore } from 'vuex';
 import wallet from './modules/wallet';
 import currencies from './modules/currencies';
 import identity from './modules/identity';
+import transactions from './modules/transactions';
 
-export default createStore({
+export const store = createStore({
     state: {
         isLoadingBalances: false,
     },
@@ -28,6 +29,9 @@ export default createStore({
     modules: {
         wallet,
         currencies,
-        identity
+        identity,
+        transactions
     }
 });
+
+export default store;
