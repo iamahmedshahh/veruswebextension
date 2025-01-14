@@ -42,6 +42,13 @@
         >
           <i class="fas fa-heart"></i>
         </div>
+        <div 
+          class="icon-wrapper"
+          @click="openGitHub"
+          title="View Source Code"
+        >
+          <i class="fab fa-github"></i>
+        </div>
       </div>
     </div>
 
@@ -195,6 +202,10 @@ async function copyAddress(type) {
   } catch (error) {
     console.error('Failed to copy address:', error)
   }
+}
+
+function openGitHub() {
+  window.open('https://github.com/iamahmedshahh/veruswebextension', '_blank');
 }
 
 // Watch for tab changes to generate QR codes

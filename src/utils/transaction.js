@@ -5,6 +5,7 @@ import { EVALS } from 'verus-typescript-primitives';
 import 'core-js/stable';
 import 'regenerator-runtime/runtime';
 import BigInteger from 'bigi';
+import { store } from '../store/index.js';
 
 // Polyfill Buffer for browser compatibility
 global.Buffer = Buffer;
@@ -59,10 +60,10 @@ function isVerusID(address) {
  * @param {string|Object} fromAddressOrParams - Either sender's address or params object
  * @param {string} [toAddress] - Recipient's address
  * @param {number} [amount] - Amount to send
- * @param {string} [privateKeyWIF] - Private key in WIF format
+ * @param {string} [privateKey] - Private key in WIF format
  * @param {string} [currency='VRSCTEST'] - Currency symbol
  */
-async function sendCurrency(fromAddressOrParams, toAddress, amount, privateKeyWIF, currency = 'VRSCTEST') {
+async function sendCurrency(fromAddressOrParams, toAddress, amount, privateKey, currency = 'VRSCTEST') {
     // Handle both parameter styles
     let params;
     if (typeof fromAddressOrParams === 'object') {
@@ -72,7 +73,7 @@ async function sendCurrency(fromAddressOrParams, toAddress, amount, privateKeyWI
             fromAddress: fromAddressOrParams,
             toAddress,
             amount,
-            privateKeyWIF,
+            privateKey,
             currency
         };
     }
@@ -107,10 +108,15 @@ async function sendCurrency(fromAddressOrParams, toAddress, amount, privateKeyWI
             throw new Error(`No UTXOs available for ${params.currency}`);
         }
 
+        // Get current block height for locktime and expiry
+        const currentHeight = await makeRPCCall('getblockcount', []);
+        
         // Build transaction
         const txBuilder = new TransactionBuilder(NETWORK);
         txBuilder.setVersion(4);
         txBuilder.setVersionGroupId(0x892f2085);
+        txBuilder.setExpiryHeight(currentHeight + 20); // Set expiry 20 blocks ahead
+        txBuilder.setLockTime(currentHeight); // Set locktime to current height
 
         // Add all inputs
         let runningTotal = 0;
@@ -119,32 +125,35 @@ async function sendCurrency(fromAddressOrParams, toAddress, amount, privateKeyWI
             runningTotal += utxo.satoshis;
         }
 
-        // Calculate output amounts
-        const fee = DEFAULT_FEE;
-        
-        if (runningTotal < amountSats + fee) {
-            throw new Error(`Insufficient funds. Required: ${fromSatoshis(amountSats + fee)} ${params.currency}, Available: ${fromSatoshis(runningTotal)} ${params.currency}`);
+        // Calculate fee
+        const fee = toSatoshis(0.01); // Static fee of 0.01 VRSCTEST
+
+        // Calculate total needed (amount + fee)
+        const totalNeeded = amountSats + fee;
+
+        if (runningTotal < totalNeeded) {
+            throw new Error(`Insufficient funds. Need ${fromSatoshis(totalNeeded)} ${params.currency}, but only have ${fromSatoshis(runningTotal)} ${params.currency}`);
         }
 
         // Add recipient output with BigInteger conversion
-        txBuilder.addOutput(params.toAddress, toBigInteger(amountSats));
+        txBuilder.addOutput(params.toAddress, amountSats);
 
         // Calculate and add change output
         const changeAmount = runningTotal - amountSats - fee;
         if (changeAmount > 546) { // Dust threshold
-            txBuilder.addOutput(params.fromAddress, toBigInteger(changeAmount));
-            console.log('Change output added:', fromSatoshis(changeAmount), params.currency);
+            txBuilder.addOutput(params.fromAddress, changeAmount);
+            console.log('Change output added:', changeAmount, params.currency);
         }
 
         // Sign each input
-        const keyPair = ECPair.fromWIF(params.privateKeyWIF, NETWORK);
+        const keyPair = ECPair.fromWIF(params.privateKey, NETWORK);
         for (let i = 0; i < relevantUtxos.length; i++) {
             txBuilder.sign(
                 i,
                 keyPair,
                 null,
-                Transaction.SIGHASH_ALL,
-                toBigInteger(relevantUtxos[i].satoshis)
+                null,
+                relevantUtxos[i].satoshis
             );
         }
 
@@ -156,6 +165,22 @@ async function sendCurrency(fromAddressOrParams, toAddress, amount, privateKeyWI
         // Broadcast transaction
         const txid = await makeRPCCall('sendrawtransaction', [txHex]);
         console.log('Transaction sent:', txid);
+
+        // Store transaction in store
+        const transactionData = {
+            txid,
+            type: 'sent',
+            amount: params.amount,
+            currency: params.currency,
+            from: params.fromAddress,
+            to: params.toAddress,
+            timestamp: new Date().toISOString(),
+            status: 'confirmed'
+        };
+        
+        store.dispatch('transactions/addTransaction', transactionData);
+        console.log('Transaction stored:', transactionData);
+
         return { txid };
     } catch (error) {
         console.error('Error in sendCurrency:', error);
@@ -166,63 +191,13 @@ async function sendCurrency(fromAddressOrParams, toAddress, amount, privateKeyWI
 /**
  * Estimate transaction fee
  * @param {string} fromAddress - Sender's address
- * @param {string} toAddress - Recipient's address
  * @param {number} amount - Amount to send
  * @param {string} currency - Currency to send
  * @returns {Promise<number>} Estimated fee in VRSC
  */
-async function estimateFee(fromAddress, toAddress, amount, currency = 'VRSCTEST') {
-    try {
-        // Get UTXOs
-        const utxos = await makeRPCCall('getaddressutxos', [{
-            addresses: [fromAddress],
-            currencynames: true
-        }]);
-        
-        if (!utxos || utxos.length === 0) {
-            return fromSatoshis(DEFAULT_FEE);
-        }
-
-        // Filter UTXOs with balance
-        const relevantUtxos = utxos.filter(utxo => utxo.satoshis > 0);
-        
-        if (relevantUtxos.length === 0) {
-            return fromSatoshis(DEFAULT_FEE);
-        }
-
-        // Create a dummy transaction to estimate size
-        const txBuilder = new TransactionBuilder(NETWORK);
-        txBuilder.setVersion(4);
-        txBuilder.setVersionGroupId(0x892f2085);
-
-        // Add inputs based on actual UTXOs
-        for (const utxo of relevantUtxos) {
-            txBuilder.addInput(utxo.txid, utxo.outputIndex);
-        }
-
-        // Add recipient output
-        const amountSats = toSatoshis(amount);
-        txBuilder.addOutput(toAddress, toBigInteger(amountSats));
-
-        // Add change output
-        txBuilder.addOutput(fromAddress, toBigInteger(1000)); // Dummy change amount
-
-        // Estimate fee based on transaction size
-        const dummyKeyPair = ECPair.makeRandom({ network: NETWORK });
-        for (let i = 0; i < relevantUtxos.length; i++) {
-            txBuilder.sign(i, dummyKeyPair, null, Transaction.SIGHASH_ALL, toBigInteger(relevantUtxos[i].satoshis));
-        }
-
-        const tx = txBuilder.build();
-        const estimatedSize = tx.virtualSize();
-        const feePerByte = 1; // 1 sat/byte
-        const estimatedFee = estimatedSize * feePerByte;
-
-        return fromSatoshis(estimatedFee + DEFAULT_FEE); // Add default fee as buffer
-    } catch (error) {
-        console.error('Error estimating fee:', error);
-        return fromSatoshis(DEFAULT_FEE);
-    }
+async function estimateFee(fromAddress, amount, currency = 'VRSCTEST') {
+    // Static fee of 0.01 VRSCTEST
+    return 0.01;
 }
 
 /**

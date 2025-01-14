@@ -167,10 +167,12 @@ export default {
         }
 
         // Get wallet info from store
+        console.log('Wallet data from storage:', data.wallet);
         walletInfo.value = {
-          privateKeyWIF: data.wallet.privateKeyWIF,
+          privateKeyWIF: data.wallet.privateKey,
           mnemonic: data.wallet.mnemonic
         };
+        console.log('Wallet info set:', walletInfo.value);
         
         isVerified.value = true;
         startCountdown();

@@ -9,6 +9,8 @@ const state = {
     hasWallet: false,
     address: null,
     network: 'testnet',
+    privateKey: null,
+    mnemonic: null,
     balances: {},
     selectedCurrencies: ['VRSCTEST'],
     connectedSites: [],
@@ -52,6 +54,7 @@ const actions = {
             
             // Generate new wallet
             const wallet = await WalletService.generateWallet(mnemonic, password);
+            console.log('Generated wallet:', wallet);
             
             // Store wallet data and password hash
             await storage.set({
@@ -64,6 +67,7 @@ const actions = {
 
             // Update store state
             commit('setWalletData', wallet);
+            console.log('Wallet data set in store');
             commit('setHasWallet', true);
             commit('setInitialized', true);
             commit('setSeedConfirmed', true);
@@ -546,6 +550,8 @@ const mutations = {
     clearWalletData(state) {
         state.address = null;
         state.network = 'testnet';
+        state.privateKey = null;
+        state.mnemonic = null;
         state.balances = {};
         state.selectedCurrencies = ['VRSCTEST'];
         state.connectedSites = [];
