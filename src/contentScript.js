@@ -51,6 +51,20 @@ window.addEventListener('message', async (event) => {
                 payload: response
             }, '*');
         }
+        else if (type === 'VERUS_SEND_TRANSACTION_REQUEST') {
+            console.log('[Verus] Processing Verus transaction request:', rest.payload);
+            const response = await browser.runtime.sendMessage({
+                type: 'SEND_VERUS_TRANSACTION',
+                payload: rest.payload,
+                origin: window.location.origin,
+                requestId
+            });
+            
+            window.postMessage({
+                type: 'VERUS_SEND_TRANSACTION_REQUEST_RESPONSE',
+                payload: response
+            }, '*');
+        }
         else if (type === 'VERUS_SET_CONNECTING') {
             await browser.runtime.sendMessage({ 
                 type, 

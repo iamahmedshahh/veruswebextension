@@ -95,6 +95,22 @@
           
           this._fetchBalances();
         }
+      } else if (requestType === 'VERUS_SEND_TRANSACTION_REQUEST') {
+        const requestId = response.requestId;
+        const pendingRequest = this._pendingRequests.get(requestId);
+        
+        if (pendingRequest) {
+          if (response.error) {
+            pendingRequest.reject(new Error(response.error));
+          } else if (response.result?.txid) {
+            pendingRequest.resolve({
+              txid: response.result.txid,
+              amount: response.result.amount,
+              currency: response.result.currency
+            });
+          }
+          this._pendingRequests.delete(requestId);
+        }
       }
 
       // Handle pending request resolution
@@ -279,6 +295,74 @@
         balance,
         requestId: response.requestId
       };
+    }
+
+    async sendTransaction(transactionParameters) {
+      if (!this._connected) {
+        throw new Error('Please connect to Verus Wallet first');
+      }
+
+      // Validate required parameters
+      if (!transactionParameters || typeof transactionParameters !== 'object') {
+        throw new Error('Transaction parameters are required');
+      }
+
+      const { toAddress, amount, currency = 'VRSCTEST' } = transactionParameters;
+
+      if (!toAddress) {
+        throw new Error('Recipient address is required');
+      }
+
+      if (typeof amount !== 'number' || amount <= 0) {
+        throw new Error('Valid amount is required');
+      }
+
+      // Generate unique request ID
+      const requestId = Math.random().toString(36).substring(7);
+
+      // Create promise to handle async response
+      const promise = new Promise((resolve, reject) => {
+        this._pendingRequests.set(requestId, { resolve, reject });
+      });
+
+      // Send request to content script
+      window.postMessage({
+        type: 'VERUS_SEND_TRANSACTION_REQUEST',
+        payload: {
+          requestId,
+          fromAddress: this._address,
+          toAddress,
+          amount,
+          currency
+        }
+      }, '*');
+
+      return promise;
+    }
+
+    async request(args) {
+      if (!args || typeof args !== 'object') {
+        throw new Error('Request args are required');
+      }
+
+      const { method, params } = args;
+
+      switch (method) {
+        case 'eth_requestAccounts':
+          return this.connect();
+        
+        case 'eth_accounts':
+          return this._address ? [this._address] : [];
+        
+        case 'eth_sendTransaction':
+          if (!params || !Array.isArray(params) || params.length === 0) {
+            throw new Error('Transaction parameters are required');
+          }
+          return this.sendTransaction(params[0]);
+        
+        default:
+          throw new Error(`Method ${method} not supported`);
+      }
     }
   }
 

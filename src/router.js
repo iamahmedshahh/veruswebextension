@@ -5,6 +5,7 @@ import ConnectApproval from './components/ConnectApproval.vue';
 import WalletDashboard from './components/WalletDashboard.vue';
 import CurrencyDetails from './components/CurrencyDetails.vue';
 import Login from './components/Login.vue';
+import TransactionApproval from './components/TransactionApproval.vue';
 import store from './store';
 
 const routes = [
@@ -41,6 +42,16 @@ const routes = [
       requestId: route.query.requestId,
       origin: route.query.origin
     })
+  },
+  {
+    path: '/approve-transaction',
+    name: 'approve-transaction',
+    component: TransactionApproval,
+    props: route => ({ 
+      requestId: route.query.requestId,
+      origin: route.query.origin
+    }),
+    meta: { requiresAuth: true }
   },
   {
     path: '/currency/:currency',
