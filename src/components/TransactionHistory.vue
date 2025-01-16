@@ -22,6 +22,10 @@ const openTxInExplorer = (txid) => {
   window.open(url, '_blank')
 }
 
+const formatDate = (timestamp) => {
+  return new Date(timestamp).toLocaleString()
+}
+
 // Later this will be connected to real transaction data from your store
 const filteredTransactions = computed(() => transactions.value)
 </script>
@@ -43,10 +47,20 @@ const filteredTransactions = computed(() => transactions.value)
         <div class="tx-details">
           <div class="tx-primary">
             <span class="tx-type">{{ tx.type === 'received' ? 'Received' : 'Sent' }}</span>
-            <span class="tx-amount">{{ tx.amount }}</span>
+            <span class="tx-amount">{{ tx.amount }} {{ tx.currency }}</span>
+          </div>
+          <div class="tx-addresses">
+            <div class="tx-address">
+              <span class="address-label">From:</span>
+              <span :class="{ 'verus-id': tx.isFromVerusId }">{{ tx.from }}</span>
+            </div>
+            <div class="tx-address">
+              <span class="address-label">To:</span>
+              <span :class="{ 'verus-id': tx.isToVerusId }">{{ tx.to }}</span>
+            </div>
           </div>
           <div class="tx-secondary">
-            <span class="tx-date">{{ tx.timestamp }}</span>
+            <span class="tx-date">{{ formatDate(tx.timestamp) }}</span>
             <span class="tx-status" :class="tx.status">{{ tx.status }}</span>
           </div>
           <div class="tx-id">
@@ -80,7 +94,7 @@ const filteredTransactions = computed(() => transactions.value)
 
 .transaction-item {
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   padding: 1rem;
   border-bottom: 1px solid var(--border-color);
   cursor: pointer;
@@ -106,14 +120,14 @@ const filteredTransactions = computed(() => transactions.value)
   font-size: 1.2rem;
 }
 
-.tx-icon.received {
-  background: rgba(46, 204, 113, 0.1);
-  color: var(--secondary-color);
+.tx-icon.sent {
+  background: #ffebee;
+  color: #f44336;
 }
 
-.tx-icon.sent {
-  background: rgba(52, 152, 219, 0.1);
-  color: var(--primary-color);
+.tx-icon.received {
+  background: #e8f5e9;
+  color: #4caf50;
 }
 
 .tx-details {
@@ -123,7 +137,30 @@ const filteredTransactions = computed(() => transactions.value)
 .tx-primary {
   display: flex;
   justify-content: space-between;
+  align-items: center;
+  margin-bottom: 0.5rem;
+}
+
+.tx-addresses {
+  margin: 0.5rem 0;
+  font-size: 0.9rem;
+}
+
+.tx-address {
+  display: flex;
+  gap: 0.5rem;
   margin-bottom: 0.25rem;
+  word-break: break-all;
+}
+
+.address-label {
+  color: #666;
+  min-width: 3rem;
+}
+
+.verus-id {
+  color: #2196f3;
+  font-weight: 500;
 }
 
 .tx-type {
@@ -131,7 +168,7 @@ const filteredTransactions = computed(() => transactions.value)
 }
 
 .tx-amount {
-  font-weight: 600;
+  font-weight: bold;
 }
 
 .tx-secondary {
@@ -139,30 +176,39 @@ const filteredTransactions = computed(() => transactions.value)
   justify-content: space-between;
   font-size: 0.85rem;
   color: #666;
+  margin-top: 0.5rem;
+}
+
+.tx-date {
+  color: #666;
 }
 
 .tx-status {
-  text-transform: capitalize;
+  padding: 0.25rem 0.5rem;
+  border-radius: 12px;
+  font-size: 0.8rem;
 }
 
 .tx-status.confirmed {
-  color: var(--secondary-color);
+  background: #e8f5e9;
+  color: #2e7d32;
 }
 
 .tx-status.pending {
-  color: #f39c12;
+  background: #fff3e0;
+  color: #f57c00;
 }
 
 .tx-id {
-  font-size: 0.8rem;
-  color: var(--text-secondary);
+  font-family: monospace;
+  font-size: 0.85rem;
+  color: #666;
   margin-top: 0.25rem;
 }
 
 .empty-state {
   text-align: center;
   padding: 2rem;
-  color: var(--text-secondary);
-  font-style: italic;
+  color: #666;
 }
 </style>

@@ -420,6 +420,271 @@ browser.runtime.onMessage.addListener(async (message, sender) => {
                 requestId: message.requestId 
             };
         }
+      case 'SEND_TRANSACTION':
+        try {
+          const origin = message.origin;
+          if (!origin) {
+            throw new Error('Origin is required for transaction requests');
+          }
+
+          // Check if site is connected
+          if (!extensionState.connectedSites.has(origin)) {
+            throw new Error('Site not connected. Please connect to Verus Wallet first.');
+          }
+
+          // Check if wallet is unlocked
+          if (walletState.isLocked) {
+            throw new Error('Wallet is locked. Please unlock your wallet first.');
+          }
+
+          const { from, to, value, data } = message.payload;
+
+          // Validate sender address matches connected address
+          if (from !== walletState.address) {
+            throw new Error('Transaction sender address does not match connected wallet');
+          }
+
+          // Create transaction request for popup approval
+          const transactionRequest = {
+            type: 'TRANSACTION',
+            origin,
+            requestId: message.requestId,
+            data: {
+              from,
+              to,
+              value,
+              data
+            },
+            timestamp: Date.now()
+          };
+
+          // Store pending request
+          extensionState.pendingRequests.set(message.requestId, transactionRequest);
+
+          // Open popup for approval
+          await browser.windows.create({
+            url: `popup.html#/approve-transaction?requestId=${message.requestId}&origin=${encodeURIComponent(origin)}`,
+            type: 'popup',
+            width: 360,
+            height: 600
+          });
+
+          // Return waiting status
+          return {
+            status: 'awaitingApproval',
+            requestId: message.requestId
+          };
+
+        } catch (error) {
+          console.error('[Verus Background] Transaction error:', error);
+          return { error: error.message };
+        }
+
+      case 'APPROVE_TRANSACTION':
+        try {
+          const requestId = message.requestId;
+          const request = extensionState.pendingRequests.get(requestId);
+          
+          if (!request) {
+            throw new Error('Transaction request not found');
+          }
+
+          // Import transaction utilities
+          const { sendCurrency } = await import('./utils/transaction.js');
+
+          // Send the transaction
+          const result = await sendCurrency({
+            fromAddress: request.data.from,
+            toAddress: request.data.to,
+            amount: request.data.value,
+            currency: 'VRSCTEST'
+          });
+
+          // Clean up request
+          extensionState.pendingRequests.delete(requestId);
+
+          return {
+            status: 'success',
+            requestId,
+            result: {
+              txid: result.txid
+            }
+          };
+
+        } catch (error) {
+          console.error('[Verus Background] Transaction approval error:', error);
+          return { error: error.message };
+        }
+
+      case 'REJECT_TRANSACTION':
+        try {
+          const requestId = message.requestId;
+          extensionState.pendingRequests.delete(requestId);
+          return {
+            status: 'rejected',
+            requestId
+          };
+        } catch (error) {
+          console.error('[Verus Background] Transaction rejection error:', error);
+          return { error: error.message };
+        }
+
+      case 'SEND_VERUS_TRANSACTION':
+        try {
+          const origin = message.origin;
+          if (!origin) {
+            throw new Error('Origin is required for transaction requests');
+          }
+
+          // Check if site is connected
+          if (!extensionState.connectedSites.has(origin)) {
+            throw new Error('Site not connected. Please connect to Verus Wallet first.');
+          }
+
+          // Check if wallet is unlocked
+          if (walletState.isLocked) {
+            throw new Error('Wallet is locked. Please unlock your wallet first.');
+          }
+
+          const { fromAddress, toAddress, amount, currency } = message.payload;
+
+          // Validate sender address matches connected address
+          if (fromAddress !== walletState.address) {
+            throw new Error('Transaction sender address does not match connected wallet');
+          }
+
+          // Create transaction request for popup approval
+          const transactionRequest = {
+            type: 'VERUS_TRANSACTION',
+            origin,
+            requestId: message.requestId,
+            data: {
+              fromAddress,
+              toAddress,
+              amount,
+              currency
+            },
+            timestamp: Date.now()
+          };
+
+          // Store pending request
+          extensionState.pendingRequests.set(message.requestId, transactionRequest);
+
+          // Open popup for approval
+          await browser.windows.create({
+            url: `popup.html#/approve-transaction?requestId=${message.requestId}&origin=${encodeURIComponent(origin)}`,
+            type: 'popup',
+            width: 360,
+            height: 600
+          });
+
+          // Return waiting status
+          return {
+            status: 'awaitingApproval',
+            requestId: message.requestId
+          };
+
+        } catch (error) {
+          console.error('[Verus Background] Transaction error:', error);
+          return { error: error.message };
+        }
+
+      case 'APPROVE_VERUS_TRANSACTION':
+        try {
+          const requestId = message.requestId;
+          const request = extensionState.pendingRequests.get(requestId);
+          
+          if (!request) {
+            throw new Error('Transaction request not found');
+          }
+
+          // Import transaction utilities
+          const { sendCurrency } = await import('./utils/transaction.js');
+
+          // Send the transaction
+          const result = await sendCurrency({
+            fromAddress: request.data.fromAddress,
+            toAddress: request.data.toAddress,
+            amount: request.data.amount,
+            currency: request.data.currency
+          });
+
+          // Clean up request
+          extensionState.pendingRequests.delete(requestId);
+
+          return {
+            status: 'success',
+            requestId,
+            result: {
+              txid: result.txid,
+              amount: request.data.amount,
+              currency: request.data.currency
+            }
+          };
+
+        } catch (error) {
+          console.error('[Verus Background] Transaction approval error:', error);
+          return { error: error.message };
+        }
+
+      case 'REJECT_VERUS_TRANSACTION':
+        try {
+          const requestId = message.requestId;
+          extensionState.pendingRequests.delete(requestId);
+          return {
+            status: 'rejected',
+            requestId
+          };
+        } catch (error) {
+          console.error('[Verus Background] Transaction rejection error:', error);
+          return { error: error.message };
+        }
+
+      case 'GET_TRANSACTION_REQUEST':
+        try {
+          const requestId = message.requestId;
+          const request = extensionState.pendingRequests.get(requestId);
+          
+          if (!request) {
+            throw new Error('Transaction request not found');
+          }
+
+          return {
+            request
+          };
+        } catch (error) {
+          console.error('[Verus Background] Error getting transaction request:', error);
+          return { error: error.message };
+        }
+
+      case 'GET_BALANCE':
+        try {
+          const currency = message.currency || 'VRSCTEST';
+          const balance = await makeRPCCall('getbalance', [walletState.address, currency]);
+          return { balance };
+        } catch (error) {
+          console.error('[Verus Background] Error getting balance:', error);
+          return { error: error.message };
+        }
+
+      case 'GET_KNOWN_ADDRESSES':
+        try {
+          // Get transaction history to build known addresses list
+          const history = await makeRPCCall('listtransactions', [walletState.address]);
+          const addresses = new Set();
+          
+          history.forEach(tx => {
+            if (tx.address) {
+              addresses.add(tx.address);
+            }
+          });
+
+          return { addresses: Array.from(addresses) };
+        } catch (error) {
+          console.error('[Verus Background] Error getting known addresses:', error);
+          return { error: error.message };
+        }
+
       case 'VERUS_SET_CONNECTING':
         try {
           await browser.storage.local.set({ isConnecting: message.payload.isConnecting });

@@ -2,12 +2,35 @@ const pkg = require('@bitgo/utxo-lib');
 const { ECPair, TransactionBuilder } = pkg;
 
 // Static configuration
-const TEST_PRIVATE_KEY = 'Your privkey here';
-const TEST_FROM_ADDRESS = 'Your address here';
-const TEST_TO_ADDRESS = 'Receiver address here';
+const TEST_PRIVATE_KEY = '';
+const TEST_FROM_ADDRESS = '';
+const TEST_TO_ADDRESS = '';
 
 // Network configuration for Verus
-const NETWORK = pkg.networks.verustest
+const NETWORK = {
+    messagePrefix: '\x18Verus Coin Signed Message:\n',
+    bech32: 'bc',
+    bip32: {
+        public: 0x0488b21e,
+        private: 0x0488ade4
+    },
+    pubKeyHash: 0x3c,
+    scriptHash: 0x55,
+    wif: 0xBC,
+    consensusBranchId: {
+        1: 0x00,
+        2: 0x00,
+        3: 0x5ba81b19,
+        4: 0x76b809bb
+    },
+    isZcash: true,
+    overwinter: {
+        activationHeight: 1,
+        version: 4,
+        versionGroupId: 0x892f2085
+    },
+    coin: 'verus'
+};
 
 // RPC Configuration
 const RPC_CONFIG = {
@@ -47,21 +70,64 @@ async function makeRPCCall(method, params = [], config = RPC_CONFIG) {
     }
 }
 
+// Function to resolve Verus ID to transparent address
+async function resolveVerusId(verusId) {
+    try {
+        console.log('Resolving Verus ID:', verusId);
+        
+        // Validate Verus ID format
+        if (!verusId.startsWith('i')) {
+            throw new Error('Not a valid Verus ID format - must start with "i"');
+        }
+
+        const response = await makeRPCCall('getidentity', [verusId]);
+        console.log('Identity info:', JSON.stringify(response, null, 2));
+        
+        if (!response || !response.identity) {
+            throw new Error(`Could not resolve Verus ID: ${verusId}`);
+        }
+
+        const identityInfo = response.identity;
+
+        // Check for identity address in different possible locations
+        // First try primary addresses
+        if (identityInfo.primaryaddresses && identityInfo.primaryaddresses.length > 0) {
+            const primaryAddress = identityInfo.primaryaddresses[0];
+            console.log('Found primary address:', primaryAddress);
+            return primaryAddress;
+        }
+
+        // Then try identity address
+        if (identityInfo.identityaddress) {
+            console.log('Found identity address:', identityInfo.identityaddress);
+            return identityInfo.identityaddress;
+        }
+
+        throw new Error(`No valid address found for Verus ID: ${verusId}`);
+    } catch (error) {
+        console.error('Error resolving Verus ID:', error);
+        if (error.message.includes('has no matching Script')) {
+            throw new Error(`Invalid destination address format for Verus ID: ${verusId}`);
+        }
+        throw error;
+    }
+}
+
 async function sendCurrency(fromAddress, toAddress, amount, privateKeyWIF, currency = 'VRSCTEST') {
     try {
         console.log('Starting sendCurrency with params:', { fromAddress, toAddress, amount, currency });
         
+        // Check if the destination is a Verus ID (starts with 'i')
+        let resolvedToAddress = toAddress;
+        if (toAddress.startsWith('i')) {
+            console.log('Destination appears to be a Verus ID, resolving...');
+            resolvedToAddress = await resolveVerusId(toAddress);
+            console.log('Resolved destination address:', resolvedToAddress);
+        }
+
         // Validate private key format
         if (!privateKeyWIF) {
             throw new Error('Private key is required');
-        }
-
-        // Validate that the private key is in WIF format
-        try {
-            ECPair.fromWIF(privateKeyWIF, NETWORK);
-        } catch (error) {
-            console.error('Invalid private key:', error);
-            throw new Error('Invalid private key format. Must be in WIF format.');
         }
 
         // Convert amount to satoshis
@@ -96,9 +162,9 @@ async function sendCurrency(fromAddress, toAddress, amount, privateKeyWIF, curre
         // Build transaction
         const txBuilder = new TransactionBuilder(NETWORK);
         
-        // Set version for Overwinter support
-        txBuilder.setVersion(4);
-        txBuilder.setVersionGroupId(0x892f2085);
+        // Set version for Verus
+        txBuilder.setVersion(NETWORK.overwinter.version);
+        txBuilder.setVersionGroupId(NETWORK.overwinter.versionGroupId);
 
         // Add all inputs
         let runningTotal = BigInt(0);
@@ -110,14 +176,14 @@ async function sendCurrency(fromAddress, toAddress, amount, privateKeyWIF, curre
 
         // Calculate output amounts
         const satoshisToSend = BigInt(Math.floor(amountToSend * SATS_PER_COIN));
-        const fee = BigInt(20000); // 0.0002 VRSC fee
+        const fee = BigInt(10000); // Lower fee: 0.0001 VRSC
         
         if (runningTotal < satoshisToSend + fee) {
             throw new Error(`Insufficient funds. Required: ${Number(satoshisToSend + fee) / SATS_PER_COIN} ${currency}, Available: ${Number(runningTotal) / SATS_PER_COIN} ${currency}`);
         }
 
         // Add recipient output
-        txBuilder.addOutput(toAddress, Number(satoshisToSend));
+        txBuilder.addOutput(resolvedToAddress, Number(satoshisToSend));
 
         // Calculate and add change output
         const changeAmount = Number(runningTotal - satoshisToSend - fee);
@@ -128,22 +194,19 @@ async function sendCurrency(fromAddress, toAddress, amount, privateKeyWIF, curre
 
         // Sign each input
         const keyPair = ECPair.fromWIF(privateKeyWIF, NETWORK);
+        
+        // Sign all inputs with SIGHASH_ALL
         for (let i = 0; i < relevantUtxos.length; i++) {
-            txBuilder.sign(
-                i,
-                keyPair,
-                null,
-                pkg.Transaction.SIGHASH_ALL,
-                relevantUtxos[i].satoshis
-            );
+            txBuilder.sign(i, keyPair, null, pkg.Transaction.SIGHASH_ALL, relevantUtxos[i].satoshis);
         }
 
         // Build and serialize the transaction
         const tx = txBuilder.build();
         const serializedTx = tx.toHex();
         console.log('Transaction built and serialized');
+        console.log('Raw transaction:', serializedTx);
 
-        // Step 8: Broadcast transaction
+        // Broadcast transaction
         console.log('Broadcasting transaction...');
         const txid = await makeRPCCall('sendrawtransaction', [serializedTx]);
         
