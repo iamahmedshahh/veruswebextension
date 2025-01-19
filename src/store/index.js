@@ -1,7 +1,6 @@
 import { createStore } from 'vuex';
 import wallet from './modules/wallet';
 import currencies from './modules/currencies';
-import identity from './modules/identity';
 import transactions from './modules/transactions';
 
 export const store = createStore({
@@ -29,7 +28,6 @@ export const store = createStore({
     modules: {
         wallet,
         currencies,
-        identity,
         transactions
     }
 });

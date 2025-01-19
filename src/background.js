@@ -136,58 +136,61 @@ browser.runtime.onInstalled.addListener(async (details) => {
 const promiseResolvers = new Map();
 let requestId = 0;
 
-// Message handling
+// Handle messages from content script
 browser.runtime.onMessage.addListener(async (message, sender) => {
-  console.log('[Verus Background] Received message:', message.type, message.requestId);
-  
+  console.log('[Verus Background] Received message:', message);
+  const { type, payload, origin } = message;
+
   try {
-    switch (message.type) {
+    switch (type) {
       case 'CONNECT_REQUEST':
-        try {
-          const origin = message.origin;
-          if (!origin) {
-            throw new Error('Origin not provided');
-          }
-
-          // Get current wallet data
-          const { wallet } = await browser.storage.local.get('wallet');
-          if (!wallet || !wallet.address) {
-            return { 
-              error: 'No wallet found',
-              requestId: message.requestId 
-            };
-          }
-
-          // Check if site is already connected
-          if (extensionState.connectedSites.has(origin)) {
-            return {
-              result: {
-                connected: true,
-                address: wallet.address,
-                chainId: 'testnet'
-              },
-              requestId: message.requestId
-            };
-          }
-
-          // Add to connected sites
-          extensionState.connectedSites.add(origin);
-          
-          return {
-            result: {
-              connected: true,
-              address: wallet.address,
-              chainId: 'testnet'
-            },
-            requestId: message.requestId
-          };
-        } catch (error) {
-          console.error('[Verus Background] Connection error:', error);
-          return { 
-            error: error.message,
-            requestId: message.requestId 
-          };
+        // Check if already connected
+        if (!walletState.isLocked && walletState.address) {
+          return { address: walletState.address };
         }
+
+        // Get wallet from storage
+        const { wallet } = await browser.storage.local.get('wallet');
+        if (!wallet || !wallet.address) {
+          throw new Error('No wallet found');
+        }
+
+        // Update state
+        walletState.isLocked = false;
+        walletState.address = wallet.address;
+        walletState.privateKey = wallet.privateKey;
+
+        return { address: walletState.address };
+
+      case 'SEND_TRANSACTION':
+        if (walletState.isLocked) {
+          throw new Error('Wallet is locked');
+        }
+
+        // Add wallet info to transaction params
+        const txParams = {
+          ...payload,
+          fromAddress: walletState.address,
+          privateKey: walletState.privateKey
+        };
+
+        // Send transaction using our library
+        const result = await sendCurrency(txParams);
+        return { txid: result.txid };
+
+      case 'GET_BALANCE':
+        if (walletState.isLocked) {
+          throw new Error('Wallet is locked');
+        }
+
+        // Get balance using RPC
+        const { currency = 'VRSCTEST' } = payload;
+        const balance = await makeRPCCall('getaddressbalance', [{
+          addresses: [walletState.address],
+          currency
+        }]);
+
+        return { balance: balance.balance };
 
       case 'CHECK_SESSION':
         try {

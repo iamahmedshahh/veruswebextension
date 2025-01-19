@@ -18,8 +18,9 @@
         {{ error }}
       </div>
 
-      <button type="submit" class="login-button">
-        Login
+      <button type="submit" class="login-button" :disabled="loading">
+        <span v-if="loading">Logging in...</span>
+        <span v-else>Login</span>
       </button>
     </form>
   </div>
@@ -35,19 +36,24 @@ export default {
     const store = useStore();
     const password = ref('');
     const error = ref('');
+    const loading = ref(false);
 
     const handleLogin = async () => {
       try {
         error.value = '';
+        loading.value = true;
         await store.dispatch('wallet/login', password.value);
       } catch (err) {
         error.value = err.message || 'Failed to login';
+      } finally {
+        loading.value = false;
       }
     };
 
     return {
       password,
       error,
+      loading,
       handleLogin
     };
   }
@@ -86,11 +92,16 @@ export default {
   border-radius: 0.5rem;
   font-size: 1rem;
   cursor: pointer;
-  transition: background-color 0.2s;
+  transition: background-color 0.2s, opacity 0.2s;
 }
 
 .login-button:hover {
   background-color: #2980b9;
+}
+
+.login-button:disabled {
+  opacity: 0.7;
+  cursor: not-allowed;
 }
 
 .error-message {

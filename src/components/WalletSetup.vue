@@ -339,6 +339,9 @@ export default {
           mnemonic: seedPhrase.value,
           password: password.value
         });
+
+        // Navigate to dashboard after successful creation
+        router.push('/');
       } catch (err) {
         error.value = err.message || 'Failed to create wallet';
       } finally {
