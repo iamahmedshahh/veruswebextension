@@ -1,77 +1,78 @@
-import browser from 'webextension-polyfill';
-
 console.log('[Verus] Content script loaded');
 
 // Inject provider script
 const script = document.createElement('script');
-script.src = browser.runtime.getURL('provider.js');
+script.src = chrome.runtime.getURL('provider.js');
+script.onload = () => {
+    console.log('[Verus] Provider script loaded successfully');
+};
 (document.head || document.documentElement).appendChild(script);
 
-// Listen for messages from the page
+// Handle messages from the page
 window.addEventListener('message', async (event) => {
     if (event.source !== window) return;
     if (!event.data.type) return;
 
     const { type, payload } = event.data;
-    console.log('[Verus] Received message from page:', type, payload);
+    console.log('[Verus] Received message from page:', type);
 
     try {
         switch (type) {
             case 'VERUS_CONNECT_REQUEST':
-                const connectResponse = await browser.runtime.sendMessage({
+                console.log('[Verus] Sending connect request to background');
+                const response = await chrome.runtime.sendMessage({ 
                     type: 'CONNECT_REQUEST',
                     origin: window.location.origin
                 });
-                
-                window.postMessage({
-                    type: 'VERUS_CONNECT_RESPONSE',
-                    result: connectResponse
-                }, '*');
-                break;
+                console.log('[Verus] Got connect response:', response);
 
-            case 'VERUS_SEND_TRANSACTION':
-                const txResponse = await browser.runtime.sendMessage({
-                    type: 'SEND_TRANSACTION',
+                if (response.error) {
+                    window.postMessage({
+                        type: 'CONNECT_REJECTED',
+                        error: response.error
+                    }, '*');
+                } else if (response.pending) {
+                    console.log('[Verus] Connection request pending approval');
+                    // Don't send any response yet, wait for approval/rejection
+                } else if (response.address) {
+                    window.postMessage({
+                        type: 'CONNECT_APPROVED',
+                        address: response.address
+                    }, '*');
+                }
+                break;
+            
+            case 'VERUS_GET_BALANCE':
+                const balanceResponse = await chrome.runtime.sendMessage({
+                    type: 'GET_BALANCE',
                     payload: payload,
                     origin: window.location.origin
                 });
                 
                 window.postMessage({
-                    type: 'VERUS_SEND_TRANSACTION_RESPONSE',
-                    result: txResponse
-                }, '*');
-                break;
-
-            case 'VERUS_GET_BALANCE':
-                const balanceResponse = await browser.runtime.sendMessage({
-                    type: 'GET_BALANCE',
-                    payload: payload
-                });
-                
-                window.postMessage({
                     type: 'VERUS_GET_BALANCE_RESPONSE',
-                    result: balanceResponse
+                    result: balanceResponse.error ? null : balanceResponse,
+                    error: balanceResponse.error
                 }, '*');
                 break;
         }
     } catch (error) {
         console.error('[Verus] Content script error:', error);
         window.postMessage({
-            type: `${type}_RESPONSE`,
+            type: type === 'VERUS_CONNECT_REQUEST' ? 'CONNECT_REJECTED' : 'VERUS_GET_BALANCE_RESPONSE',
             error: error.message
         }, '*');
     }
 });
 
-// Listen for messages from the background script
-browser.runtime.onMessage.addListener((message) => {
+// Listen for messages from background script
+chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     console.log('[Verus] Received background message:', message);
     
-    // Forward state changes to the page
-    if (message.type === 'STATE_CHANGE') {
-        window.postMessage({
-            type: 'VERUS_STATE_CHANGE',
-            ...message.payload
-        }, '*');
+    // Forward approval/rejection messages to the page
+    if (message.type === 'CONNECT_APPROVED' || message.type === 'CONNECT_REJECTED') {
+        window.postMessage(message, '*');
     }
+    
+    return true;
 });

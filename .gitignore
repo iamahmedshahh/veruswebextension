@@ -15,8 +15,8 @@ dist-ssr
 *.crx
 *.pem
 *.zip
-verusweb3
 hooks
+verusweb3
 
 # Editor directories and files
 .vscode/*

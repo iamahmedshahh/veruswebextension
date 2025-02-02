@@ -17,6 +17,12 @@ const actions = {
         if (!transaction.timestamp) {
             transaction.timestamp = new Date().toISOString();
         }
+
+        // Ensure isNonUtxo is stored correctly
+        if (transaction.isNonUtxo === undefined) {
+            console.warn('Transaction missing isNonUtxo flag:', transaction);
+        }
+
         commit('ADD_TRANSACTION', transaction);
         
         // Store in local storage
