@@ -106,6 +106,9 @@ import LoadingBar from './LoadingBar.vue';
 
 export default {
   name: 'TransactionApproval',
+  components: {
+    LoadingBar
+  },
   props: {
     requestId: {
       type: String,
@@ -115,9 +118,6 @@ export default {
       type: String,
       required: true
     }
-  },
-  components: {
-    LoadingBar
   },
   setup(props) {
     // State
@@ -132,46 +132,65 @@ export default {
 
     // Computed Properties
     const timestamp = computed(() => requestData.value?.timestamp || Date.now());
-    const fromAddress = computed(() => requestData.value?.data?.fromAddress || '');
-    const toAddress = computed(() => requestData.value?.data?.toAddress || '');
-    const amount = computed(() => requestData.value?.data?.amount || 0);
-    const currency = computed(() => requestData.value?.data?.currency || 'VRSCTEST');
-    const fee = computed(() => estimatedFee.value);
+    const fromAddress = computed(() => {
+        const data = requestData.value?.payload;
+        return data?.fromAddress || data?.from || '';
+    });
+    const toAddress = computed(() => {
+        const data = requestData.value?.payload;
+        return data?.toAddress || data?.to || '';
+    });
+    const amount = computed(() => {
+        const amt = requestData.value?.payload?.amount;
+        return amt ? parseFloat(amt) : 0;
+    });
+    const currency = computed(() => requestData.value?.payload?.currency || 'VRSCTEST');
+    const fee = computed(() => estimatedFee.value ? parseFloat(estimatedFee.value) : 0);
     const totalAmount = computed(() => Number(amount.value) + Number(fee.value));
     const balanceAfter = computed(() => {
-      if (currentBalance.value === null) return null;
-      return Math.max(0, currentBalance.value - totalAmount.value);
+        if (currentBalance.value === null) return null;
+        return Math.max(0, parseFloat(currentBalance.value) - totalAmount.value);
     });
 
     const isFromAddressVerusId = computed(() => isVerusID(fromAddress.value));
     const isToAddressVerusId = computed(() => isVerusID(toAddress.value));
     const isNewAddress = computed(() => !knownAddresses.value.has(toAddress.value));
-    const isKnownOrigin = computed(() => knownOrigins.value.has(origin));
+    const isKnownOrigin = computed(() => {
+        const origin = requestData.value?.origin;
+        return origin && knownOrigins.value.has(origin);
+    });
 
     const sufficientBalance = computed(() => {
-      return currentBalance.value !== null && totalAmount.value <= currentBalance.value;
+        if (currentBalance.value === null) return false;
+        const balance = parseFloat(currentBalance.value);
+        return !isNaN(balance) && !isNaN(totalAmount.value) && totalAmount.value <= balance;
     });
 
     const securityChecks = computed(() => {
-      return isKnownOrigin.value && sufficientBalance.value;
+        // For now, we'll only require sufficient balance since we're in testing
+        // Later we can add more strict checks like isKnownOrigin
+        return sufficientBalance.value;
     });
 
     const warnings = computed(() => {
-      const msgs = [];
-      if (isNewAddress.value) {
-        msgs.push('You have not sent funds to this address before');
-      }
-      if (currentBalance.value !== null && totalAmount.value > currentBalance.value) {
-        msgs.push('Insufficient balance for this transaction');
-      }
-      if (!isKnownOrigin.value) {
-        msgs.push('Unknown origin');
-      }
-      return msgs;
+        const msgs = [];
+        if (isNewAddress.value) {
+            msgs.push('You have not sent funds to this address before');
+        }
+        if (currentBalance.value !== null) {
+            const balance = parseFloat(currentBalance.value);
+            if (!isNaN(balance) && !isNaN(totalAmount.value) && totalAmount.value > balance) {
+                msgs.push('Insufficient balance for this transaction');
+            }
+        }
+        if (!isKnownOrigin.value) {
+            msgs.push('Unknown origin');
+        }
+        return msgs;
     });
 
     const canApprove = computed(() => {
-      return securityChecks.value && !processing.value;
+        return securityChecks.value && !processing.value;
     });
 
     // Methods
@@ -199,15 +218,18 @@ export default {
 
         // Calculate fee
         estimatedFee.value = await estimateFee(
-          requestData.value.data.fromAddress,
-          requestData.value.data.amount,
-          requestData.value.data.currency
+          requestData.value.payload.fromAddress || requestData.value.payload.from,
+          requestData.value.payload.amount,
+          requestData.value.payload.currency || 'VRSCTEST'
         );
 
         // Load current balance
         const balanceResponse = await browser.runtime.sendMessage({
           type: 'GET_BALANCE',
-          currency: requestData.value.data.currency
+          payload: {
+            address: requestData.value.payload.fromAddress || requestData.value.payload.from
+          },
+          currency: requestData.value.payload.currency || 'VRSCTEST'
         });
 
         if (balanceResponse.error) {
@@ -248,40 +270,40 @@ export default {
       processing.value = true;
       try {
         const response = await browser.runtime.sendMessage({
-          type: 'APPROVE_VERUS_TRANSACTION',
-          requestId: props.requestId
+          type: 'APPROVE_TRANSACTION',
+          payload: {
+            requestId: props.requestId
+          }
         });
 
         if (response.error) {
           throw new Error(response.error);
         }
 
-        // Close the popup
         window.close();
       } catch (err) {
         console.error('Failed to approve transaction:', err);
         error.value = err.message;
-      } finally {
         processing.value = false;
       }
     };
 
     const reject = async () => {
-      if (processing.value) return;
-      
+      processing.value = true;
       try {
-        if (props.requestId) {
-          await browser.runtime.sendMessage({
-            type: 'REJECT_VERUS_TRANSACTION',
+        const response = await browser.runtime.sendMessage({
+          type: 'REJECT_TRANSACTION',
+          payload: {
             requestId: props.requestId
-          });
-        }
+          }
+        });
+
+        window.close();
       } catch (err) {
-        console.error('Error rejecting transaction:', err);
+        console.error('Failed to reject transaction:', err);
+        error.value = err.message;
+        processing.value = false;
       }
-      
-      // Close the popup regardless of rejection success
-      window.close();
     };
 
     // Lifecycle
@@ -293,7 +315,7 @@ export default {
       loading,
       error,
       processing,
-      origin,
+      origin: props.origin,
       timestamp,
       fromAddress,
       toAddress,

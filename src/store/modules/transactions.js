@@ -12,7 +12,7 @@ const getters = {
 
 // Actions
 const actions = {
-    addTransaction({ commit }, transaction) {
+    async addTransaction({ commit }, transaction) {
         // Add timestamp if not present
         if (!transaction.timestamp) {
             transaction.timestamp = new Date().toISOString();
@@ -25,15 +25,24 @@ const actions = {
 
         commit('ADD_TRANSACTION', transaction);
         
-        // Store in local storage
-        const storedTxs = JSON.parse(localStorage.getItem('transactions') || '[]');
-        storedTxs.push(transaction);
-        localStorage.setItem('transactions', JSON.stringify(storedTxs));
+        // Store in chrome.storage.local
+        try {
+            const { transactions = [] } = await chrome.storage.local.get('transactions');
+            transactions.push(transaction);
+            await chrome.storage.local.set({ transactions });
+        } catch (error) {
+            console.error('Failed to store transaction:', error);
+        }
     },
 
-    loadTransactions({ commit }) {
-        const storedTxs = JSON.parse(localStorage.getItem('transactions') || '[]');
-        commit('SET_TRANSACTIONS', storedTxs);
+    async loadTransactions({ commit }) {
+        try {
+            const { transactions = [] } = await chrome.storage.local.get('transactions');
+            commit('SET_TRANSACTIONS', transactions);
+        } catch (error) {
+            console.error('Failed to load transactions:', error);
+            commit('SET_TRANSACTIONS', []);
+        }
     }
 };
 

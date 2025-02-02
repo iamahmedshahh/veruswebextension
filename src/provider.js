@@ -105,6 +105,54 @@ class VerusProvider {
             }, 30000);
         });
     }
+
+    /**
+     * Send transaction
+     * @param {Object} params
+     * @param {string} params.to
+     * @param {string} params.amount
+     * @param {string} [params.currency='VRSCTEST']
+     * @param {string} [params.memo]
+     * @returns {Promise<{txid: string}>}
+     */
+    async send(params) {
+        if (!this._connected) throw new Error('Not connected');
+        if (!params.to || !params.amount) throw new Error('Missing required parameters: to and amount');
+
+        return new Promise((resolve, reject) => {
+            const handleMessage = (event) => {
+                if (event.source !== window) return;
+                const { type, result, error } = event.data;
+                if (type === 'VERUS_SEND_RESPONSE') {
+                    window.removeEventListener('message', handleMessage);
+                    if (error) {
+                        reject(new Error(error));
+                    } else if (!result || !result.txid) {
+                        reject(new Error('Invalid transaction response'));
+                    } else {
+                        resolve(result);
+                    }
+                }
+            };
+
+            window.addEventListener('message', handleMessage);
+            window.postMessage({
+                type: 'VERUS_SEND_REQUEST',
+                payload: {
+                    from: this._address,
+                    to: params.to,
+                    amount: params.amount,
+                    currency: params.currency || 'VRSCTEST',
+                    memo: params.memo
+                }
+            }, '*');
+
+            setTimeout(() => {
+                window.removeEventListener('message', handleMessage);
+                reject(new Error('Transaction request timed out. Please try again.'));
+            }, 5 * 60 * 1000);
+        });
+    }
 }
 
 // Create and expose the provider

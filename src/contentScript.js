@@ -55,6 +55,21 @@ window.addEventListener('message', async (event) => {
                     error: balanceResponse.error
                 }, '*');
                 break;
+
+            case 'VERUS_SEND_REQUEST':
+                console.log('[Verus] Sending transaction request to background');
+                const sendResponse = await chrome.runtime.sendMessage({
+                    type: 'SEND_TRANSACTION',
+                    payload: payload,
+                    origin: window.location.origin
+                });
+                
+                window.postMessage({
+                    type: 'VERUS_SEND_RESPONSE',
+                    result: sendResponse.error ? null : { txid: sendResponse.txid },
+                    error: sendResponse.error
+                }, '*');
+                break;
         }
     } catch (error) {
         console.error('[Verus] Content script error:', error);
@@ -70,7 +85,10 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     console.log('[Verus] Received background message:', message);
     
     // Forward approval/rejection messages to the page
-    if (message.type === 'CONNECT_APPROVED' || message.type === 'CONNECT_REJECTED') {
+    if (message.type === 'CONNECT_APPROVED' || 
+        message.type === 'CONNECT_REJECTED' ||
+        message.type === 'TRANSACTION_APPROVED' ||
+        message.type === 'TRANSACTION_REJECTED') {
         window.postMessage(message, '*');
     }
     

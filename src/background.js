@@ -1,5 +1,7 @@
 // Verus RPC communication utilities
 import { makeRPCCall, testConnection, getAddressBalance, getAllCurrencyBalances } from './utils/verus-rpc';
+import { sendCurrency } from './utils/transaction';
+import { store } from './store';
 
 console.log('Background script loaded');
 
@@ -36,6 +38,22 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
             handleBalanceRequest(origin, payload?.address, sendResponse);
             break;
             
+        case 'GET_TRANSACTION_REQUEST':
+            handleGetTransactionRequest(message.requestId, sendResponse);
+            break;
+            
+        case 'GET_KNOWN_ADDRESSES':
+            handleGetKnownAddresses(sendResponse);
+            break;
+            
+        case 'GET_CONNECTED_SITES':
+            handleGetConnectedSites(sendResponse);
+            break;
+            
+        case 'SEND_TRANSACTION':
+            handleSendTransaction(origin, payload, sender, sendResponse);
+            break;
+            
         case 'APPROVE_CONNECTION':
             console.log('[Verus Background] Processing approval:', payload);
             handleConnectionApproval(payload, sendResponse);
@@ -44,6 +62,14 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         case 'REJECT_CONNECTION':
             console.log('[Verus Background] Processing rejection:', payload);
             handleConnectionRejection(payload, sendResponse);
+            break;
+            
+        case 'APPROVE_TRANSACTION':
+            handleTransactionApproval(payload, sendResponse);
+            break;
+            
+        case 'REJECT_TRANSACTION':
+            handleTransactionRejection(payload, sendResponse);
             break;
             
         default:
@@ -203,7 +229,9 @@ async function handleConnectionRejection(payload, sendResponse) {
 
 async function handleBalanceRequest(origin, address, sendResponse) {
     try {
-        if (!state.connectedSites.has(origin)) {
+        // Skip connection check if request is from our popup
+        const isPopup = !origin || origin === chrome.runtime.getURL('');
+        if (!isPopup && !state.connectedSites.has(origin)) {
             throw new Error('Site not connected');
         }
 
@@ -211,11 +239,213 @@ async function handleBalanceRequest(origin, address, sendResponse) {
             throw new Error('No address provided');
         }
 
-        const balance = await getAddressBalance(address);
+        // Get balance in VRSC instead of satoshis
+        const balance = await getAddressBalance(address, true);
         sendResponse({ balance });
     } catch (error) {
         console.error('[Verus Background] Balance error:', error);
         sendResponse({ error: error.message });
+    }
+}
+
+async function handleGetTransactionRequest(requestId, sendResponse) {
+    try {
+        if (!requestId) {
+            throw new Error('No request ID provided');
+        }
+
+        const request = state.pendingRequests.get(requestId);
+        if (!request) {
+            throw new Error('Invalid request ID or request expired');
+        }
+
+        sendResponse({
+            request: {
+                payload: request.payload,
+                origin: request.origin,
+                timestamp: request.timestamp
+            }
+        });
+    } catch (error) {
+        console.error('[Verus Background] Get transaction request error:', error);
+        sendResponse({ error: error.message });
+    }
+}
+
+async function handleGetKnownAddresses(sendResponse) {
+    try {
+        // For now, we'll return an empty set since we don't have address history tracking yet
+        // TODO: Implement address history tracking
+        sendResponse({ addresses: [] });
+    } catch (error) {
+        console.error('[Verus Background] Get known addresses error:', error);
+        sendResponse({ error: error.message });
+    }
+}
+
+async function handleGetConnectedSites(sendResponse) {
+    try {
+        // Convert Set to Array for serialization
+        const sites = Array.from(state.connectedSites);
+        sendResponse({ sites });
+    } catch (error) {
+        console.error('[Verus Background] Get connected sites error:', error);
+        sendResponse({ error: error.message });
+    }
+}
+
+async function handleSendTransaction(origin, payload, sender, sendResponse) {
+    try {
+        console.log('[Verus Background] Processing send transaction request:', payload);
+
+        // Check if site is connected
+        if (!state.connectedSites.has(origin)) {
+            throw new Error('Site not connected. Please connect first.');
+        }
+
+        // Validate payload
+        if (!payload.from || !payload.to || !payload.amount) {
+            throw new Error('Missing required transaction parameters');
+        }
+
+        // Generate request ID
+        const requestId = Math.random().toString(36).substring(7);
+        
+        // Store request details
+        state.pendingRequests.set(requestId, {
+            origin,
+            tabId: sender.tab.id,
+            sendResponse,
+            timestamp: Date.now(),
+            type: 'transaction',
+            payload
+        });
+
+        // Open transaction approval popup
+        const popupURL = chrome.runtime.getURL('popup.html#/approve-transaction');
+        const queryParams = new URLSearchParams({
+            requestId,
+            origin: encodeURIComponent(origin),
+            action: 'transaction',
+            fromAddress: payload.fromAddress || payload.from,
+            toAddress: payload.toAddress || payload.to,
+            amount: payload.amount,
+            currency: payload.currency || 'VRSCTEST',
+            memo: payload.memo || ''
+        }).toString();
+
+        const popup = await chrome.windows.create({
+            url: `${popupURL}?${queryParams}`,
+            type: 'popup',
+            width: 360,
+            height: 600,
+            focused: true
+        });
+
+        // Store popup window ID
+        state.pendingRequests.get(requestId).popupId = popup.id;
+
+    } catch (error) {
+        console.error('[Verus Background] Send transaction error:', error);
+        sendResponse({ error: error.message });
+    }
+    return true;
+}
+
+async function handleTransactionApproval(payload, sendResponse) {
+    try {
+        const request = state.pendingRequests.get(payload.requestId);
+        if (!request) {
+            throw new Error('Invalid request ID');
+        }
+
+        const { from, to, amount, currency } = request.payload;
+        
+        // Get private key from wallet store
+        const privateKey = await store.dispatch('wallet/getPrivateKey');
+        if (!privateKey) {
+            throw new Error('Private key not found for address');
+        }
+        
+        // Execute the transaction using our utility function
+        const result = await sendCurrency({
+            fromAddress: from,
+            toAddress: to,
+            amount: parseFloat(amount),
+            currency: currency || 'VRSCTEST',
+            privateKey
+        });
+        
+        // Store the transaction
+        await store.dispatch('transactions/addTransaction', {
+            txid: result.txid,
+            from,
+            to,
+            amount: parseFloat(amount),
+            currency: currency || 'VRSCTEST',
+            timestamp: new Date().toISOString(),
+            status: 'confirmed'
+        });
+
+        // Close the popup
+        if (request.popupId) {
+            await chrome.windows.remove(request.popupId);
+        }
+
+        // Send response back to the content script
+        request.sendResponse({ txid: result.txid });
+        
+        // Clean up
+        state.pendingRequests.delete(payload.requestId);
+
+    } catch (error) {
+        console.error('[Verus Background] Transaction approval error:', error);
+        const request = state.pendingRequests.get(payload.requestId);
+        if (request) {
+            request.sendResponse({ error: error.message });
+            if (request.popupId) {
+                await chrome.windows.remove(request.popupId);
+            }
+            state.pendingRequests.delete(payload.requestId);
+        }
+    }
+}
+
+async function handleTransactionRejection(payload, sendResponse) {
+    try {
+        const request = state.pendingRequests.get(payload.requestId);
+        if (!request) {
+            throw new Error('Invalid request ID');
+        }
+
+        // Close the popup
+        if (request.popupId) {
+            await chrome.windows.remove(request.popupId);
+        }
+
+        // Send rejection response
+        request.sendResponse({ error: 'Transaction rejected by user' });
+        
+        // Clean up
+        state.pendingRequests.delete(payload.requestId);
+
+    } catch (error) {
+        console.error('[Verus Background] Transaction rejection error:', error);
+    }
+}
+
+// Helper function to get private key for an address
+async function getPrivateKeyForAddress(address) {
+    try {
+        // Get private key from wallet store
+        const privateKey = await store.dispatch('wallet/getPrivateKey');
+        if (!privateKey) {
+            throw new Error('Private key not found for address');
+        }
+        return privateKey;
+    } catch (error) {
+        console.error('Error getting private key:', error);
+        throw error;
     }
 }
 

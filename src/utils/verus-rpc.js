@@ -1,5 +1,6 @@
 // Verus RPC communication utilities
 import store from '../store'
+import { fromSatoshis } from './transaction';
 
 // RPC configuration
 const RPC_SERVER = "https://api.verustest.net"
@@ -7,6 +8,9 @@ const RPC_SERVER = "https://api.verustest.net"
 const getRPCConfig = () => ({
     server: RPC_SERVER
 });
+
+// Constants
+const SATS_PER_COIN = 100000000; // 1 VRSC = 100,000,000 satoshis
 
 /**
  * Make an RPC call to the Verus daemon
@@ -72,12 +76,14 @@ async function testConnection() {
 /**
  * Gets the balance for an address
  * @param {string} address - Verus address
- * @returns {Promise<number>} Balance in satoshis
+ * @param {boolean} [inVRSC=true] - If true, returns balance in VRSC, otherwise in satoshis
+ * @returns {Promise<number>} Balance in VRSC or satoshis
  */
-async function getAddressBalance(address) {
+async function getAddressBalance(address, inVRSC = true) {
     try {
         const result = await makeRPCCall('getaddressbalance', [{ "addresses": [address] }]);
-        return result.balance || 0;
+        const balanceInSats = result.balance || 0;
+        return inVRSC ? fromSatoshis(balanceInSats) : balanceInSats;
     } catch (error) {
         console.error('Failed to get address balance:', error);
         throw error;
@@ -132,30 +138,24 @@ async function getNetworkInfo() {
  */
 async function getAllCurrencyBalances(address) {
     try {
-        // First get the list of all currencies
-        const currencies = await makeRPCCall('listcurrencies');
-
-        // Initialize result object with main chain balance
-        const balances = {
-            'VRSCTEST': '0'
-        };
+        const balances = {};
 
         // Get main chain balance
         const mainBalance = await getAddressBalance(address);
-        balances['VRSCTEST'] = (mainBalance / 100000000).toString(); // Convert from satoshis
+        balances['VRSCTEST'] = mainBalance.toString();
 
         // Get balances for each currency
+        const currencies = await makeRPCCall('listcurrencies');
         for (const currency of currencies) {
+            if (currency.currencyid === 'iJhCezBExJHvtyH3fGhNnt2NhU4Ztkf2yq') continue; // Skip VRSCTEST
+
             try {
-                const result = await makeRPCCall('getaddressbalance',
-                    [{ "addresses": [address] }],
-                    getRPCConfig(),
-                    currency.currencyid
-                );
-                balances[currency.currencyid] = (result.balance / 100000000).toString();
+                const result = await makeRPCCall('getaddressbalance', [{ "addresses": [address] }], null, currency.currencyid);
+                if (result && result.balance > 0) {
+                    balances[currency.currencyid] = fromSatoshis(result.balance).toString();
+                }
             } catch (error) {
-                console.warn(`Failed to get balance for ${currency.currencyid}:`, error);
-                balances[currency.currencyid] = '0';
+                console.error(`Failed to get balance for currency ${currency.currencyid}:`, error);
             }
         }
 
