@@ -17,6 +17,7 @@ const hasWallet = computed(() => store.getters['wallet/hasWallet']);
 const isLoggedIn = computed(() => store.getters['wallet/isLoggedIn']);
 const error = computed(() => store.getters['wallet/errorMessage']);
 const loading = computed(() => store.getters['wallet/isLoading']);
+const networkInitialized = computed(() => store.getters['network/isInitialized']);
 
 onMounted(async () => {
   try {
@@ -25,13 +26,15 @@ onMounted(async () => {
     // Check if this is opened as a popup action (no route)
     isPopupAction.value = !route.name && window.location.hash === '';
     
-    // Initialize wallet state
+    // Initialize store
+    await store.dispatch('initialize');
+    
+    // Initialize wallet state after store is initialized
     await store.dispatch('wallet/initializeState');
     
     // Load wallet data if we're logged in
     if (store.getters['wallet/isLoggedIn']) {
       await store.dispatch('wallet/loadWallet');
-      await store.dispatch('currencies/initialize');
     }
   } catch (err) {
     console.error('Error initializing app:', err);

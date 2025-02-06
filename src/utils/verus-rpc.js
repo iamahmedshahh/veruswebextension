@@ -2,15 +2,16 @@
 import store from '../store'
 import { fromSatoshis } from './transaction';
 
-// RPC configuration
-const RPC_SERVER = "https://api.verustest.net"
-
-const getRPCConfig = () => ({
-    server: RPC_SERVER
-});
-
 // Constants
 const SATS_PER_COIN = 100000000; // 1 VRSC = 100,000,000 satoshis
+
+const getRPCConfig = () => {
+    const server = store.getters['network/rpcServer'];
+    if (!server) {
+        throw new Error('RPC server configuration not found. Please check network settings.');
+    }
+    return { server };
+};
 
 /**
  * Make an RPC call to the Verus daemon
@@ -21,9 +22,14 @@ const SATS_PER_COIN = 100000000; // 1 VRSC = 100,000,000 satoshis
  * @param {string} currency - The currency to use (optional)
  * @returns {Promise<any>} - The response from the RPC server
  */
-async function makeRPCCall(method, params = [], config = getRPCConfig(), currency = null) {
+async function makeRPCCall(method, params = [], config = null, currency = null) {
     try {
-        const RPC_SERVER = currency ? `${config.server}/${currency.toLowerCase()}` : config.server;
+        const rpcConfig = config || getRPCConfig();
+        const RPC_SERVER = currency ? `${rpcConfig.server}/${currency.toLowerCase()}` : rpcConfig.server;
+
+        if (!RPC_SERVER) {
+            throw new Error('RPC server URL is not configured');
+        }
 
         console.log('Making RPC call to', RPC_SERVER, '- Method:', method, 'Params:', params);
 
@@ -54,7 +60,7 @@ async function makeRPCCall(method, params = [], config = getRPCConfig(), currenc
         return data.result;
     } catch (error) {
         console.error('RPC call failed:', error);
-        throw new Error(`RPC call failed: ${error.message}`);
+        throw error;
     }
 }
 

@@ -2,14 +2,15 @@ import { verusRPC } from '../../services/VerusRPCService';
 import storage from '../services/StorageService';
 
 const MAX_CURRENCIES = 7;
-const DEFAULT_CURRENCY = 'VRSCTEST';
+const MAINNET_DEFAULT_CURRENCIES = ['VRSC', 'BTC', 'ETH'];
+const TESTNET_DEFAULT_CURRENCIES = ['VRSCTEST'];
 
 export default {
     namespaced: true,
     
     state: {
         availableCurrencies: [],
-        selectedCurrencies: [DEFAULT_CURRENCY],
+        selectedCurrencies: [],
         balances: {},
         currencyDefinitions: {},
         loading: false,
@@ -33,8 +34,13 @@ export default {
         },
 
         SET_SELECTED_CURRENCIES(state, currencies) {
-            // Ensure default currency is always included and at the start of the array
-            const uniqueCurrencies = [...new Set([DEFAULT_CURRENCY, ...currencies])];
+            // Get default currencies based on network
+            const defaultCurrencies = this.state.network.currentNetwork === 'MAINNET' 
+                ? MAINNET_DEFAULT_CURRENCIES 
+                : TESTNET_DEFAULT_CURRENCIES;
+            
+            // Ensure default currencies are always included and at the start of the array
+            const uniqueCurrencies = [...new Set([...defaultCurrencies, ...currencies])];
             state.selectedCurrencies = uniqueCurrencies;
         },
 
@@ -59,23 +65,31 @@ export default {
     },
 
     actions: {
-        async initialize({ dispatch, commit }) {
-            await dispatch('fetchAvailableCurrencies');
+        async initialize({ dispatch, commit, rootState }) {
+            // Wait for network to be initialized
+            if (!rootState.network.initialized) {
+                await dispatch('network/initialize', null, { root: true });
+            }
+            
             await dispatch('loadPersistedState');
+            await dispatch('fetchAvailableCurrencies');
             await dispatch('fetchBalances');
         },
 
-        async loadPersistedState({ commit }) {
+        async loadPersistedState({ commit, rootState }) {
             try {
                 const { selectedCurrencies } = await storage.get(['selectedCurrencies']);
+                const defaultCurrencies = rootState.network.currentNetwork === 'MAINNET' 
+                    ? MAINNET_DEFAULT_CURRENCIES 
+                    : TESTNET_DEFAULT_CURRENCIES;
                 
                 if (selectedCurrencies && selectedCurrencies.length > 0) {
                     commit('SET_SELECTED_CURRENCIES', selectedCurrencies);
                     return { selectedCurrencies };
                 }
                 
-                // Set default if no persisted state
-                commit('SET_SELECTED_CURRENCIES', [DEFAULT_CURRENCY]);
+                // Set defaults if no persisted state
+                commit('SET_SELECTED_CURRENCIES', defaultCurrencies);
                 return null;
             } catch (error) {
                 console.error('Failed to load persisted state:', error);
@@ -93,62 +107,77 @@ export default {
         },
 
         async selectCurrency({ commit, dispatch, state }, currency) {
-            if (state.selectedCurrencies.length >= MAX_CURRENCIES) {
-                commit('SET_ERROR', `Cannot select more than ${MAX_CURRENCIES} currencies`);
-                return;
-            }
-            
-            if (!state.selectedCurrencies.includes(currency)) {
-                const newSelection = [...state.selectedCurrencies, currency];
-                commit('SET_SELECTED_CURRENCIES', newSelection);
-                await dispatch('persistSelectedCurrencies');
-                await dispatch('fetchBalances');
-            }
-        },
-
-        async unselectCurrency({ commit, dispatch, state }, currency) {
-            if (currency === DEFAULT_CURRENCY) {
-                commit('SET_ERROR', 'Cannot unselect default currency');
-                return;
-            }
-            
-            const newSelection = state.selectedCurrencies.filter(c => c !== currency);
-            commit('SET_SELECTED_CURRENCIES', newSelection);
+            const updatedCurrencies = [...state.selectedCurrencies, currency];
+            commit('SET_SELECTED_CURRENCIES', updatedCurrencies);
             await dispatch('persistSelectedCurrencies');
             await dispatch('fetchBalances');
         },
 
-        async fetchAvailableCurrencies({ commit }) {
-            commit('SET_LOADING', true);
-            commit('SET_ERROR', null);
+        async unselectCurrency({ commit, dispatch, state, rootState }, currency) {
+            // Don't allow removing default currencies
+            const defaultCurrencies = rootState.network.currentNetwork === 'MAINNET' 
+                ? MAINNET_DEFAULT_CURRENCIES 
+                : TESTNET_DEFAULT_CURRENCIES;
             
+            if (defaultCurrencies.includes(currency)) {
+                console.warn('Cannot remove default currency:', currency);
+                return;
+            }
+
+            const updatedCurrencies = state.selectedCurrencies.filter(c => c !== currency);
+            commit('SET_SELECTED_CURRENCIES', updatedCurrencies);
+            await dispatch('persistSelectedCurrencies');
+        },
+
+        async fetchAvailableCurrencies({ commit, rootState }) {
+            commit('SET_LOADING', true);
             try {
                 const currencies = await verusRPC.listCurrencies();
-                if (Array.isArray(currencies)) {
-                    commit('SET_AVAILABLE_CURRENCIES', currencies);
-                } else {
-                    throw new Error('Invalid currency list response');
-                }
+                commit('SET_AVAILABLE_CURRENCIES', currencies);
             } catch (error) {
-                console.error('Failed to fetch currencies:', error);
+                console.error('Failed to fetch available currencies:', error);
                 commit('SET_ERROR', 'Failed to fetch available currencies');
-                commit('SET_AVAILABLE_CURRENCIES', []);
             } finally {
                 commit('SET_LOADING', false);
             }
         },
 
         async fetchBalances({ commit, state, rootState }) {
-            if (!rootState.wallet.address) {
-                console.log('No wallet address available');
-                return;
-            }
-
+            if (!rootState.wallet.addresses) return;
+            
             commit('SET_LOADING', true);
-            commit('SET_ERROR', null);
-
             try {
-                const balances = await verusRPC.getAllCurrencyBalances(rootState.wallet.address);
+                const balances = {};
+                
+                // Get VRSC/VRSCTEST balance
+                const vrscAddress = rootState.wallet.addresses.VRSC?.address;
+                if (vrscAddress) {
+                    const vrscBalances = await verusRPC.getAllCurrencyBalances(vrscAddress);
+                    Object.assign(balances, vrscBalances);
+                }
+                
+                // Get BTC balance if available
+                const btcAddress = rootState.wallet.addresses.BTC?.address;
+                if (btcAddress) {
+                    try {
+                        // TODO: Implement BTC balance fetching
+                        balances.BTC = 0;
+                    } catch (error) {
+                        console.error('Failed to fetch BTC balance:', error);
+                    }
+                }
+                
+                // Get ETH balance if available
+                const ethAddress = rootState.wallet.addresses.ETH?.address;
+                if (ethAddress) {
+                    try {
+                        // TODO: Implement ETH balance fetching
+                        balances.ETH = 0;
+                    } catch (error) {
+                        console.error('Failed to fetch ETH balance:', error);
+                    }
+                }
+                
                 commit('SET_BALANCES', balances);
             } catch (error) {
                 console.error('Failed to fetch balances:', error);
@@ -162,10 +191,8 @@ export default {
     getters: {
         getAvailableCurrencies: state => state.availableCurrencies,
         getSelectedCurrencies: state => state.selectedCurrencies,
-        getBalances: state => state.balances,
-        isLoading: state => state.loading,
-        hasError: state => !!state.error,
-        getError: state => state.error,
-        canAddMoreCurrencies: state => state.selectedCurrencies.length < MAX_CURRENCIES
+        getBalance: state => currency => state.balances[currency] || 0,
+        canAddMoreCurrencies: state => state.selectedCurrencies.length < MAX_CURRENCIES,
+        getCurrencyDefinition: state => currency => state.currencyDefinitions[currency]
     }
 };

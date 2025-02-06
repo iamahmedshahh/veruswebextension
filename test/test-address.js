@@ -1,133 +1,192 @@
+import { Buffer } from 'buffer';
 import * as bitgo from '@bitgo/utxo-lib';
-import crypto from 'crypto';
 import BigInteger from 'bigi';
 import bip39 from 'bip39';
-import sha256 from 'js-sha256';
+import crypto from 'crypto';
+import bs58check from 'bs58check';
+import * as ethUtil from 'ethereumjs-util';
 
 // Get the BitGo library instance
 const lib = bitgo.default;
 
-// Network configuration for Verus
-const NETWORK = lib.networks.verustest;
+// Network configurations
+const NETWORK_CONFIG = {
+    verus: lib.networks.verus,
+    bitcoin: lib.networks.bitcoin
+};
 
+// Mimic agama-wallet-lib's seedToWif
+function seedToWif(seed, network, iguana = true) {
+    let bytes;
+    let isWif = false;
+    
+    // If seed is WIF, decode it
+    try {
+        bytes = bs58check.decode(seed);
+        isWif = true;
+    } catch (e) {
+        // Create SHA256 hash of the seed
+        const hash = crypto.createHash('sha256').update(seed).digest();
+        bytes = hash;
 
-function seedToPrivateKey(seed, iguana = true) {
-    // Create SHA256 hash of the seed
-    const hash = sha256.create().update(seed);
-    const bytes = hash.array();
-
-    // Iguana compatible conversion
-    if (iguana) {
-        bytes[0] &= 248;
-        bytes[31] &= 127;
-        bytes[31] |= 64;
+        // Iguana compatible conversion
+        if (iguana) {
+            bytes[0] &= 248;
+            bytes[31] &= 127;
+            bytes[31] |= 64;
+        }
     }
 
-    return bytes;
+    const privKey = BigInteger.fromBuffer(bytes);
+    const keyPair = new lib.ECPair(privKey, null, { network });
+
+    return {
+        pub: keyPair.getAddress(),
+        pubHex: keyPair.getPublicKeyBuffer().toString('hex'),
+        priv: keyPair.toWIF()
+    };
 }
 
-function generateWallet() {
-    console.log('Generating new wallet...');
+// Mimic agama-wallet-lib's seedToPriv
+function seedToPriv(seed, type = 'btc') {
+    const seedBuf = Buffer.from(seed);
+    const hash = crypto.createHash('sha256').update(seedBuf).digest();
     
-    try {
-        // Generate mnemonic (24 words for extra security)
-        const mnemonic = bip39.generateMnemonic(256);
-        console.log('\nMnemonic (save these 24 words):\n', mnemonic);
-        
-        // Convert mnemonic to private key using sha256
-        const privateKeyBytes = seedToPrivateKey(mnemonic);
-        
-        // Create key pair using private key bytes
-        const privateKey = BigInteger.fromBuffer(Buffer.from(privateKeyBytes));
-        const keyPair = new lib.ECPair(privateKey, null, { network: NETWORK });
-        
-        // Get WIF (Wallet Import Format) - this is the private key in a more readable format
-        const wif = keyPair.toWIF();
-        console.log('\nPrivate Key (WIF format):\n', wif);
-        
-        // Generate P2PKH address
-        const pubKeyHash = lib.crypto.hash160(keyPair.getPublicKeyBuffer());
-        const scriptPubKey = lib.script.pubKeyHash.output.encode(pubKeyHash);
-        const address = lib.address.fromOutputScript(scriptPubKey, NETWORK);
+    if (type === 'eth') {
+        return '0x' + hash.toString('hex');
+    } else {
+        return hash.toString('hex');
+    }
+}
 
-        console.log('\nPublic Address:\n', address);
-        
-        // Verify address format
-        if (!address.startsWith('R')) {
-            throw new Error('Generated address does not start with R');
+async function deriveWeb3Keypair(seed) {
+    // First check if seed is already an ETH private key
+    let seedIsEthPrivkey = false;
+    try {
+        if (seed.length === 66 && seed.startsWith('0x')) {
+            // Remove 0x prefix for the check
+            const privKeyBuf = Buffer.from(seed.slice(2), 'hex');
+            if (privKeyBuf.length === 32) {
+                seedIsEthPrivkey = true;
+            }
         }
-        
-        if (address.length !== 34) {
-            throw new Error('Generated address length is not 34 characters');
-        }
-        
-        console.log('\n✅ SUCCESS: Wallet generated successfully');
-        console.log('Important: Save your mnemonic phrase and private key in a secure location!');
-        
-        // Also verify we can recover the same address from WIF
-        const recoveredKeyPair = lib.ECPair.fromWIF(wif, NETWORK);
-        const recoveredAddress = recoveredKeyPair.getAddress();
-        
-        if (recoveredAddress !== address) {
-            throw new Error('Address recovery verification failed');
-        }
-        console.log('\n✅ Address recovery verification passed');
-        
+    } catch(e) {}
+
+    // Get Electrum keys
+    const electrumKeys = seedToWif(seed, NETWORK_CONFIG.bitcoin, true);
+    
+    // Get public key buffer from electrum keys
+    const pubKeyBuffer = Buffer.from(electrumKeys.pubHex, 'hex');
+    
+    // Compute ETH address directly from public key using ethereumjs-util
+    const addressBuffer = ethUtil.pubToAddress(pubKeyBuffer, true);
+    const ethAddress = ethUtil.toChecksumAddress('0x' + addressBuffer.toString('hex'));
+    
+    // Use seed directly if it's an ETH private key, otherwise derive it
+    const ethPrivKey = seedIsEthPrivkey ? seed : seedToPriv(electrumKeys.priv, 'eth');
+    
+    return {
+        privKey: ethPrivKey,
+        address: ethAddress
+    };
+}
+
+async function generateWallet() {
+    try {
+        // Generate BIP39 mnemonic (24 words)
+        const entropy = crypto.randomBytes(32);
+        const mnemonic = bip39.entropyToMnemonic(entropy);
+        console.log('\n=== Generating New Cross-Chain Wallet ===\n');
+        console.log(' Mnemonic (24 words):\n', mnemonic);
+
+        // Generate addresses using agama-wallet-lib approach
+        const vrscKeys = seedToWif(mnemonic, NETWORK_CONFIG.verus, true);
+        const btcKeys = seedToWif(mnemonic, NETWORK_CONFIG.bitcoin, true);
+        const ethKeys = await deriveWeb3Keypair(mnemonic);
+
+        const addresses = {
+            VRSC: {
+                address: vrscKeys.pub,
+                privateKey: vrscKeys.priv
+            },
+            BTC: {
+                address: btcKeys.pub,
+                privateKey: btcKeys.priv
+            },
+            ETH: {
+                address: ethKeys.address,
+                privateKey: ethKeys.privKey
+            }
+        };
+
+        console.log('\n Generated Addresses:');
+        console.log('VRSC:', addresses.VRSC.address);
+        console.log('BTC:', addresses.BTC.address);
+        console.log('ETH:', addresses.ETH.address);
+
+        console.log('\n Private Keys:');
+        console.log('VRSC (WIF):', addresses.VRSC.privateKey);
+        console.log('BTC (WIF):', addresses.BTC.privateKey);
+        console.log('ETH:', addresses.ETH.privateKey);
+
         return {
             mnemonic,
-            privateKey: wif,
-            address
+            addresses
         };
     } catch (error) {
-        console.error('Failed to generate wallet:', error);
+        console.error('Generation failed:', error);
         throw error;
     }
 }
 
-// Add a function to test mnemonic recovery
-function recoverFromMnemonic(mnemonic) {
-    console.log('\nRecovering wallet from mnemonic...');
-    
+// Run the test
+(async () => {
     try {
-        // Convert mnemonic to private key using sha256
-        const privateKeyBytes = seedToPrivateKey(mnemonic);
+        // Generate initial wallet
+        const wallet = await generateWallet();
         
-        // Create key pair using private key bytes
-        const privateKey = BigInteger.fromBuffer(Buffer.from(privateKeyBytes));
-        const keyPair = new lib.ECPair(privateKey, null, { network: NETWORK });
+        // Test recovery
+        console.log('\n=== Testing Recovery ===');
         
-        // Get address
-        const address = keyPair.getAddress();
-        const wif = keyPair.toWIF();
-        
-        console.log('\nRecovered Address:', address);
-        console.log('Recovered Private Key (WIF):', wif);
-        
-        return {
-            privateKey: wif,
-            address
+        const recoveredVrsc = seedToWif(wallet.mnemonic, NETWORK_CONFIG.verus, true);
+        const recoveredBtc = seedToWif(wallet.mnemonic, NETWORK_CONFIG.bitcoin, true);
+        const recoveredEth = await deriveWeb3Keypair(wallet.mnemonic);
+
+        const recoveredAddresses = {
+            VRSC: {
+                address: recoveredVrsc.pub,
+                privateKey: recoveredVrsc.priv
+            },
+            BTC: {
+                address: recoveredBtc.pub,
+                privateKey: recoveredBtc.priv
+            },
+            ETH: {
+                address: recoveredEth.address,
+                privateKey: recoveredEth.privKey
+            }
         };
+
+        // Verify matches
+        const validations = {
+            VRSC: wallet.addresses.VRSC.address === recoveredAddresses.VRSC.address,
+            BTC: wallet.addresses.BTC.address === recoveredAddresses.BTC.address,
+            ETH: wallet.addresses.ETH.address === recoveredAddresses.ETH.address
+        };
+
+        console.log('\n Recovery Validation:');
+        console.log('Verus Match:', validations.VRSC ? '✅' : '❌');
+        console.log('Bitcoin Match:', validations.BTC ? '✅' : '❌');
+        console.log('Ethereum Match:', validations.ETH ? '✅' : '❌');
+
+        if (Object.values(validations).every(v => v)) {
+            console.log('\n All addresses recovered successfully!');
+        } else {
+            console.log('\n Recovery mismatch detected!');
+            process.exit(1);
+        }
     } catch (error) {
-        console.error('Failed to recover wallet:', error);
-        throw error;
+        console.error('Test failed:', error);
+        process.exit(1);
     }
-}
-
-// Generate a wallet and verify it
-console.log('=== Generating New Verus Wallet ===\n');
-const wallet = generateWallet();
-
-// Test recovery
-console.log('\n=== Testing Mnemonic Recovery ===');
-const recovered = recoverFromMnemonic(wallet.mnemonic);
-
-if (recovered.address === wallet.address && recovered.privateKey === wallet.privateKey) {
-    console.log('\n✅ Recovery test passed - Generated and recovered addresses match');
-} else {
-    console.error('\n❌ Recovery test failed - Addresses do not match');
-    console.log('Original:', wallet.address);
-    console.log('Recovered:', recovered.address);
-}
-
-// Export functions
-export { generateWallet, recoverFromMnemonic };
+})();

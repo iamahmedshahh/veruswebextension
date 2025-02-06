@@ -1,4 +1,5 @@
 import { makeRPCCall } from '../utils/verus-rpc';
+import store from '../store';
 
 export class VerusRPCService {
     constructor() {
@@ -15,18 +16,24 @@ export class VerusRPCService {
         }
     }
 
-    async getBalance(address, currency = 'VRSCTEST') {
+    getNativeCurrency() {
+        return store.getters['network/mainCoin'];
+    }
+
+    async getBalance(address, currency) {
         if (!address) {
             console.error('No address provided for balance check');
             return 0;
         }
+
+        const nativeCurrency = this.getNativeCurrency().toLowerCase();
 
         try {
             // Get UTXOs for more detailed balance information
             const utxoResponse = await makeRPCCall('getaddressutxos', [{
                 addresses: [address],
                 currencynames: true
-            }]);
+            }], null, nativeCurrency);
             
             console.log('UTXO response for', currency, ':', utxoResponse);
             
@@ -38,7 +45,7 @@ export class VerusRPCService {
             const relevantUtxos = utxoResponse.filter(utxo => {
                 const hasCurrencyInNames = utxo.currencynames && utxo.currencynames[currency];
                 const hasCurrencyInValues = utxo.currencyvalues && utxo.currencyvalues[currency];
-                const isNativeCurrency = currency === 'VRSCTEST';
+                const isNativeCurrency = currency === this.getNativeCurrency();
                 const hasNativeBalance = isNativeCurrency && utxo.satoshis > 0;
                 
                 return hasCurrencyInNames || hasCurrencyInValues || hasNativeBalance;
@@ -47,8 +54,8 @@ export class VerusRPCService {
             // Calculate total balance
             let totalBalance = 0;
             relevantUtxos.forEach(utxo => {
-                if (currency === 'VRSCTEST') {
-                    totalBalance += (utxo.satoshis || 0) / 100000000; // Convert satoshis to VRSCTEST
+                if (currency === this.getNativeCurrency()) {
+                    totalBalance += (utxo.satoshis || 0) / 100000000; // Convert satoshis to native currency
                 } else {
                     const amountFromNames = utxo.currencynames?.[currency] || 0;
                     const amountFromValues = utxo.currencyvalues?.[currency] || 0;
@@ -69,12 +76,14 @@ export class VerusRPCService {
             return {};
         }
 
+        const nativeCurrency = this.getNativeCurrency().toLowerCase();
+
         try {
-            // Get UTXOs for the address
+            // Get UTXOs for the address with the native currency path
             const utxoResponse = await makeRPCCall('getaddressutxos', [{
                 addresses: [address],
                 currencynames: true
-            }]);
+            }], null, nativeCurrency);
 
             // Get currency definitions
             const currencyList = await this.listCurrencies();
@@ -101,10 +110,9 @@ export class VerusRPCService {
 
             // Process each UTXO
             utxoResponse.forEach(utxo => {
-                // Handle native currency (VRSCTEST)
+                // Handle native currency
                 if (utxo.satoshis > 0) {
-                    const nativeCurrency = 'VRSCTEST';
-                    balances[nativeCurrency] = (balances[nativeCurrency] || 0) + (utxo.satoshis / 100000000);
+                    balances[this.getNativeCurrency()] = (balances[this.getNativeCurrency()] || 0) + (utxo.satoshis / 100000000);
                 }
 
                 // Handle other currencies from currencynames
@@ -134,7 +142,8 @@ export class VerusRPCService {
 
     async listCurrencies() {
         try {
-            const response = await makeRPCCall('listcurrencies');
+            // For listing currencies, we use the base URL without the currency path
+            const response = await makeRPCCall('listcurrencies', [], { server: store.getters['network/rpcServer'] });
             console.log('Currency list response:', response);
             
             if (!Array.isArray(response)) {
