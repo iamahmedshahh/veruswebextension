@@ -66,14 +66,14 @@ const actions = {
                 address: wallet.addresses.VRSC.address, // Set VRSC address as main address
                 network: 'testnet',
                 privateKey: wallet.addresses.VRSC.privateKey,
-                addresses: wallet.addresses // Ensure addresses are stored
+                addresses: wallet.addresses, // Ensure addresses are stored
+                passwordHash: wallet.passwordHash // Store the password hash in the wallet data
             };
 
             await storage.set({
                 wallet: walletData,
                 hasWallet: true,
                 isLoggedIn: true,
-                passwordHash: wallet.hashedPassword,
                 lastLoginTime: Date.now()
             });
 
@@ -114,14 +114,14 @@ const actions = {
                 address: wallet.addresses.VRSC.address, // Set VRSC address as main address
                 network: 'testnet',
                 privateKey: wallet.addresses.VRSC.privateKey,
-                addresses: wallet.addresses // Ensure addresses are stored
+                addresses: wallet.addresses, // Ensure addresses are stored
+                passwordHash: wallet.passwordHash // Store the password hash in the wallet data
             };
 
             await storage.set({
                 wallet: walletData,
                 hasWallet: true,
                 isLoggedIn: true,
-                passwordHash: wallet.hashedPassword,
                 lastLoginTime: Date.now()
             });
 
@@ -404,12 +404,12 @@ const actions = {
             
             // Get stored wallet data
             const { wallet } = await storage.get('wallet');
-            if (!wallet || !wallet.hashedPassword) {
+            if (!wallet || !wallet.passwordHash) {
                 throw new Error('No wallet found');
             }
             
-            // Verify password
-            const isValid = await WalletService.verifyPassword(password, wallet.hashedPassword);
+            // Verify password using WalletService
+            const isValid = await WalletService.comparePassword(password, wallet.passwordHash);
             if (!isValid) {
                 throw new Error('Invalid password');
             }
