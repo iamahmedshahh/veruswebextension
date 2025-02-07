@@ -6,33 +6,30 @@ import crypto from 'crypto';
 import bs58check from 'bs58check';
 import * as ethUtil from 'ethereumjs-util';
 import bcrypt from 'bcryptjs';
-import store from '../store';
 
-// Get the BitGo library instance
 const lib = bitgo.default;
 
-// Network configurations
 const NETWORK_CONFIG = {
     verus: lib.networks.verus,
     verustest: lib.networks.verustest,
     bitcoin: lib.networks.bitcoin
 };
 
-// Mimic agama-wallet-lib's seedToWif
+const VERUS_NETWORK = import.meta.env.VITE_VERUS_NETWORK === 'testnet' 
+    ? NETWORK_CONFIG.verustest 
+    : NETWORK_CONFIG.verus;
+
 function seedToWif(seed, network, iguana = true) {
     let bytes;
     let isWif = false;
     
-    // If seed is WIF, decode it
     try {
         bytes = bs58check.decode(seed);
         isWif = true;
     } catch (e) {
-        // Create SHA256 hash of the seed
         const hash = crypto.createHash('sha256').update(seed).digest();
         bytes = hash;
 
-        // Iguana compatible conversion
         if (iguana) {
             bytes[0] &= 248;
             bytes[31] &= 127;
@@ -50,7 +47,6 @@ function seedToWif(seed, network, iguana = true) {
     };
 }
 
-// Mimic agama-wallet-lib's seedToPriv
 function seedToPriv(seed, type = 'btc') {
     const seedBuf = Buffer.from(seed);
     const hash = crypto.createHash('sha256').update(seedBuf).digest();
@@ -63,11 +59,9 @@ function seedToPriv(seed, type = 'btc') {
 }
 
 async function deriveWeb3Keypair(seed) {
-    // First check if seed is already an ETH private key
     let seedIsEthPrivkey = false;
     try {
         if (seed.length === 66 && seed.startsWith('0x')) {
-            // Remove 0x prefix for the check
             const privKeyBuf = Buffer.from(seed.slice(2), 'hex');
             if (privKeyBuf.length === 32) {
                 seedIsEthPrivkey = true;
@@ -75,17 +69,12 @@ async function deriveWeb3Keypair(seed) {
         }
     } catch(e) {}
 
-    // Get Electrum keys
     const electrumKeys = seedToWif(seed, NETWORK_CONFIG.bitcoin, true);
-    
-    // Get public key buffer from electrum keys
     const pubKeyBuffer = Buffer.from(electrumKeys.pubHex, 'hex');
     
-    // Compute ETH address directly from public key using ethereumjs-util
     const addressBuffer = ethUtil.pubToAddress(pubKeyBuffer, true);
     const ethAddress = ethUtil.toChecksumAddress('0x' + addressBuffer.toString('hex'));
     
-    // Use seed directly if it's an ETH private key, otherwise derive it
     const ethPrivKey = seedIsEthPrivkey ? seed : seedToPriv(electrumKeys.priv, 'eth');
     
     return {
@@ -105,19 +94,19 @@ export default class WalletService {
 
     static async generateWallet(mnemonic, password) {
         try {
-            // Generate or use provided mnemonic
             if (!mnemonic) {
                 const entropy = crypto.randomBytes(32);
                 mnemonic = bip39.entropyToMnemonic(entropy);
             }
 
-            // Convert mnemonic to seed
-            const seed = bip39.mnemonicToSeedSync(mnemonic).toString('hex');
+            if (!bip39.validateMnemonic(mnemonic)) {
+                throw new Error('Invalid mnemonic');
+            }
 
             // Generate addresses using agama-wallet-lib approach
-            const vrscKeys = seedToWif(seed, NETWORK_CONFIG.verus, true);
-            const btcKeys = seedToWif(seed, NETWORK_CONFIG.bitcoin, true);
-            const ethKeys = await deriveWeb3Keypair(seed);
+            const vrscKeys = seedToWif(mnemonic, VERUS_NETWORK, true);
+            const btcKeys = seedToWif(mnemonic, NETWORK_CONFIG.bitcoin, true);
+            const ethKeys = await deriveWeb3Keypair(mnemonic);
 
             const addresses = {
                 VRSC: {
@@ -134,7 +123,6 @@ export default class WalletService {
                 }
             };
 
-            // Hash password for storage
             const passwordHash = await this.hashPassword(password);
 
             return {
