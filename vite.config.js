@@ -79,12 +79,10 @@ export default defineConfig({
     minify: false,
     rollupOptions: {
       input: {
-        popup: path.resolve(__dirname, 'popup.html'),
+        popup: path.resolve(__dirname, 'src/pages/popup.html'),
         provider: path.resolve(__dirname, 'src/provider.js')
       },
       output: {
-        preserveModules: true,
-        preserveModulesRoot: 'src',
         entryFileNames: (chunkInfo) => {
           if (chunkInfo.name === 'provider') {
             return '[name].js';
@@ -92,7 +90,6 @@ export default defineConfig({
           return 'assets/[name]-[hash].js';
         }
       },
-      preserveEntrySignatures: 'strict',
     }
   }
 });
