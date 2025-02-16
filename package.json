@@ -46,6 +46,9 @@
     "jest-environment-jsdom": "^29.7.0",
     "vite": "^5.1.4"
   },
+  "resolutions": {
+    "typeforce": "git+https://github.com/monkins1010/typeforce.git"
+  },
   "jest": {
     "testEnvironment": "jsdom",
     "transform": {},
