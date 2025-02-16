@@ -61,6 +61,9 @@
     "vite-plugin-top-level-await": "^1.4.1",
     "vite-plugin-wasm": "^3.3.0"
   },
+  "resolutions": {
+    "typeforce": "git+https://github.com/monkins1010/typeforce.git"
+  },
   "jest": {
     "testEnvironment": "jsdom",
     "transform": {},
