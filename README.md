@@ -1,4 +1,8 @@
-# Verus Web Wallet Extension
+# Layer VOne Extension
+
+### TEST IN ACTION:
+
+#### https://layeronext.com/
 
 ### 🚀 Support Development
 This project is under active development. Help us reach our goal of 3k to 4K VRSC!

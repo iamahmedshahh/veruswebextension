@@ -61,6 +61,11 @@ export default defineConfig({
         content_security_policy: {
           extension_pages: "script-src 'self' 'wasm-unsafe-eval'; object-src 'self'"
         },
+      },
+      buildInfo: {
+        input: {
+          popup: path.resolve(__dirname, 'popup.html')
+        }
       }
     })
   ],
@@ -81,19 +86,14 @@ export default defineConfig({
     rollupOptions: {
       input: {
         popup: path.resolve(__dirname, 'popup.html'),
-        provider: path.resolve(__dirname, 'src/provider.js')
+        background: path.resolve(srcDir, 'background.js'),
+        contentScript: path.resolve(srcDir, 'contentScript.js'),
+        injectProvider: path.resolve(srcDir, 'injectProvider.js'),
+        provider: path.resolve(srcDir, 'provider.js')
       },
       output: {
-        preserveModules: true,
-        preserveModulesRoot: 'src',
-        entryFileNames: (chunkInfo) => {
-          if (chunkInfo.name === 'provider') {
-            return '[name].js';
-          }
-          return 'assets/[name]-[hash].js';
-        }
-      },
-      preserveEntrySignatures: 'strict',
-    }
+        entryFileNames: '[name].js'
+      }
+    },
   }
 });
