@@ -23,9 +23,9 @@ export default defineConfig({
     webExtension({
       manifest: {
         manifest_version: 3,
-        name: 'Verus Web Wallet (TestNet)',
-        version: '0.0.3',
-        description: 'Help me make the Worlds first secure web wallet for Layer 1 Blockchain',
+        name: 'Layer VOne (Testnet)',
+        version: '0.0.4',
+        description: 'Help me make the extension that brings native Layer 1 and Web 3 together on The Verus Blockchain',
         permissions: [
           'storage',
           'activeTab'
@@ -69,14 +69,15 @@ export default defineConfig({
       '@': srcDir,
       'stream': 'stream-browserify',
       'crypto': 'crypto-browserify',
-      'buffer': 'buffer'
+      'buffer': 'buffer',
+      'bitcoin-ops/evals.json': path.resolve(__dirname, 'src/utils/bitcoin-ops-evals.json')
     }
   },
   build: {
     outDir: 'dist',
     emptyOutDir: true,
     sourcemap: process.env.NODE_ENV === 'development',
-    minify: false,
+    minify: true,
     rollupOptions: {
       input: {
         popup: path.resolve(__dirname, 'popup.html'),

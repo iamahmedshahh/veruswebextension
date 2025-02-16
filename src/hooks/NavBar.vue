@@ -54,7 +54,7 @@
         
         <!-- Balance Display -->
         <div class="balance-display">
-          <span class="balance-amount">{{ formatBalance(totalBalance) }}</span>
+          <span class="balance-amount">{{ formatBalance(balance) }}</span>
           <span class="balance-currency">Total Balance</span>
         </div>
         
@@ -88,6 +88,8 @@ const showSettingsDropdown = ref(false);
 const showUserDropdown = ref(false);
 const isCopied = ref(false);
 const verusName = ref(null);
+const balance = ref('0');
+const chainId = ref('testnet');
 
 // Get wallet functionality from composable
 const {
@@ -95,22 +97,20 @@ const {
   isConnected,
   isConnecting,
   error,
-  balances,
-  totalBalance,
-  chainId,
   connectWallet,
-  disconnectWallet,
-  getTotalBalance,
+  sendTransaction,
+  getBalance,
   checkWalletInstalled
 } = useVerusWallet();
 
-// Format wallet address
+// Computed properties
 const formattedAddress = computed(() => {
   if (!address.value) return '';
-  return `${address.value.slice(0, 5)}...${address.value.slice(-5)}`;
+  const addr = address.value;
+  return `${addr.slice(0, 6)}...${addr.slice(-4)}`;
 });
 
-// Connect Verus Wallet
+// Connect wallet
 const connectVerusWallet = async () => {
   try {
     // Check if provider is available
@@ -119,20 +119,18 @@ const connectVerusWallet = async () => {
       return;
     }
 
-    // Connect to wallet
     await connectWallet();
-    // Get total balance after connection
-    await getTotalBalance();
+    await refreshBalance();
   } catch (err) {
-    console.error('Failed to connect wallet:', err);
+    console.error('Failed to connect:', err);
   }
 };
 
-// Refresh total balance
+// Balance management
 const refreshBalance = async () => {
   try {
     if (isConnected.value) {
-      await getTotalBalance();
+      balance.value = await getBalance();
     }
   } catch (err) {
     console.error('Failed to refresh balance:', err);
@@ -141,44 +139,38 @@ const refreshBalance = async () => {
 
 // Set up interval to refresh balance
 onMounted(() => {
-  // Initial balance check if connected
   if (isConnected.value) {
     refreshBalance();
   }
-  
-  // Refresh balance every minute
-  const interval = setInterval(refreshBalance, 60000);
-  
-  // Clean up interval
-  onUnmounted(() => {
-    clearInterval(interval);
-  });
+  const interval = setInterval(refreshBalance, 30000);
+  onUnmounted(() => clearInterval(interval));
 });
 
 // Copy address to clipboard
 const copyToClipboard = async () => {
-  if (!address.value) return;
-  
-  try {
-    await navigator.clipboard.writeText(address.value);
-    isCopied.value = true;
-    setTimeout(() => {
-      isCopied.value = false;
-    }, 2000);
-  } catch (err) {
-    console.error('Failed to copy address:', err);
+  if (address.value) {
+    try {
+      await navigator.clipboard.writeText(address.value);
+      isCopied.value = true;
+      setTimeout(() => {
+        isCopied.value = false;
+      }, 2000);
+    } catch (err) {
+      console.error('Failed to copy:', err);
+    }
   }
 };
 
 // Format balance
 const formatBalance = (value) => {
-  if (!value) return '0.00';
-  // Handle string balance values
-  const numValue = typeof value === 'string' ? parseFloat(value) : value;
-  return numValue.toLocaleString(undefined, {
-    minimumFractionDigits: 2,
-    maximumFractionDigits: 8
-  });
+  try {
+    return parseFloat(value).toLocaleString('en-US', {
+      minimumFractionDigits: 2,
+      maximumFractionDigits: 8
+    });
+  } catch {
+    return '0.00';
+  }
 };
 
 // Toggle dropdowns

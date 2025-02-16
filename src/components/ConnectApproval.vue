@@ -60,47 +60,50 @@ onMounted(async () => {
   }
 });
 
-async function handleApprove() {
-  if (isProcessing.value) return;
-  isProcessing.value = true;
-  
+const handleApprove = async () => {
   try {
-    // Send approval to background script
-    await browser.runtime.sendMessage({
-      type: 'CONNECT_RESPONSE',
-      requestId: requestId.value,
-      approved: true
-    });
+    isProcessing.value = true;
+    console.log('Sending approval for request:', requestId.value);
     
-    // Close the window
-    window.close();
-  } catch (err) {
-    console.error('Error approving connection:', err);
-  } finally {
-    isProcessing.value = false;
-  }
-}
+    // Send approval message
+    const response = await browser.runtime.sendMessage({
+      type: 'APPROVE_CONNECTION',
+      payload: { requestId: requestId.value }
+    });
 
-async function handleReject() {
-  if (isProcessing.value) return;
-  isProcessing.value = true;
-  
-  try {
-    // Send rejection to background script
-    await browser.runtime.sendMessage({
-      type: 'CONNECT_RESPONSE',
-      requestId: requestId.value,
-      approved: false
-    });
-    
-    // Close the window
+    console.log('Got approval response:', response);
+    if (response.error) {
+      throw new Error(response.error);
+    }
+
+    // Close window
     window.close();
-  } catch (err) {
-    console.error('Error rejecting connection:', err);
-  } finally {
+  } catch (error) {
+    console.error('Error approving connection:', error);
     isProcessing.value = false;
   }
-}
+};
+
+const handleReject = async () => {
+  try {
+    isProcessing.value = true;
+    console.log('Sending rejection for request:', requestId.value);
+    
+    // Send rejection message
+    const response = await browser.runtime.sendMessage({
+      type: 'REJECT_CONNECTION',
+      payload: { requestId: requestId.value }
+    });
+
+    console.log('Got rejection response:', response);
+
+    // Close window
+    window.close();
+  } catch (error) {
+    console.error('Error rejecting connection:', error);
+    isProcessing.value = false;
+  }
+};
 </script>
 
 <style scoped>

@@ -1,12 +1,17 @@
 // Verus RPC communication utilities
 import store from '../store'
+import { fromSatoshis } from './transaction';
 
-// RPC configuration
-const RPC_SERVER = "https://api.verustest.net"
+// Constants
+const SATS_PER_COIN = 100000000; // 1 VRSC = 100,000,000 satoshis
 
-const getRPCConfig = () => ({
-    server: RPC_SERVER
-});
+const getRPCConfig = () => {
+    const server = store.getters['network/rpcServer'];
+    if (!server) {
+        throw new Error('RPC server configuration not found. Please check network settings.');
+    }
+    return { server };
+};
 
 /**
  * Make an RPC call to the Verus daemon
@@ -17,9 +22,14 @@ const getRPCConfig = () => ({
  * @param {string} currency - The currency to use (optional)
  * @returns {Promise<any>} - The response from the RPC server
  */
-async function makeRPCCall(method, params = [], config = getRPCConfig(), currency = null) {
+async function makeRPCCall(method, params = [], config = null, currency = null) {
     try {
-        const RPC_SERVER = currency ? `${config.server}/${currency.toLowerCase()}` : config.server;
+        const rpcConfig = config || getRPCConfig();
+        const RPC_SERVER = currency ? `${rpcConfig.server}/${currency.toLowerCase()}` : rpcConfig.server;
+
+        if (!RPC_SERVER) {
+            throw new Error('RPC server URL is not configured');
+        }
 
         console.log('Making RPC call to', RPC_SERVER, '- Method:', method, 'Params:', params);
 
@@ -50,7 +60,7 @@ async function makeRPCCall(method, params = [], config = getRPCConfig(), currenc
         return data.result;
     } catch (error) {
         console.error('RPC call failed:', error);
-        throw new Error(`RPC call failed: ${error.message}`);
+        throw error;
     }
 }
 
@@ -72,12 +82,14 @@ async function testConnection() {
 /**
  * Gets the balance for an address
  * @param {string} address - Verus address
- * @returns {Promise<number>} Balance in satoshis
+ * @param {boolean} [inVRSC=true] - If true, returns balance in VRSC, otherwise in satoshis
+ * @returns {Promise<number>} Balance in VRSC or satoshis
  */
-async function getAddressBalance(address) {
+async function getAddressBalance(address, inVRSC = true) {
     try {
         const result = await makeRPCCall('getaddressbalance', [{ "addresses": [address] }]);
-        return result.balance || 0;
+        const balanceInSats = result.balance || 0;
+        return inVRSC ? fromSatoshis(balanceInSats) : balanceInSats;
     } catch (error) {
         console.error('Failed to get address balance:', error);
         throw error;
@@ -132,30 +144,24 @@ async function getNetworkInfo() {
  */
 async function getAllCurrencyBalances(address) {
     try {
-        // First get the list of all currencies
-        const currencies = await makeRPCCall('listcurrencies');
-
-        // Initialize result object with main chain balance
-        const balances = {
-            'VRSCTEST': '0'
-        };
+        const balances = {};
 
         // Get main chain balance
         const mainBalance = await getAddressBalance(address);
-        balances['VRSCTEST'] = (mainBalance / 100000000).toString(); // Convert from satoshis
+        balances['VRSCTEST'] = mainBalance.toString();
 
         // Get balances for each currency
+        const currencies = await makeRPCCall('listcurrencies');
         for (const currency of currencies) {
+            if (currency.currencyid === 'iJhCezBExJHvtyH3fGhNnt2NhU4Ztkf2yq') continue; // Skip VRSCTEST
+
             try {
-                const result = await makeRPCCall('getaddressbalance',
-                    [{ "addresses": [address] }],
-                    getRPCConfig(),
-                    currency.currencyid
-                );
-                balances[currency.currencyid] = (result.balance / 100000000).toString();
+                const result = await makeRPCCall('getaddressbalance', [{ "addresses": [address] }], null, currency.currencyid);
+                if (result && result.balance > 0) {
+                    balances[currency.currencyid] = fromSatoshis(result.balance).toString();
+                }
             } catch (error) {
-                console.warn(`Failed to get balance for ${currency.currencyid}:`, error);
-                balances[currency.currencyid] = '0';
+                console.error(`Failed to get balance for currency ${currency.currencyid}:`, error);
             }
         }
 

@@ -1,132 +1,96 @@
-import browser from 'webextension-polyfill';
-
 console.log('[Verus] Content script loaded');
-
-// Track pending requests
-const pendingRequests = new Map();
 
 // Inject provider script
 const script = document.createElement('script');
-script.src = browser.runtime.getURL('provider.js');
+script.src = chrome.runtime.getURL('provider.js');
+script.onload = () => {
+    console.log('[Verus] Provider script loaded successfully');
+};
 (document.head || document.documentElement).appendChild(script);
 
-// Listen for messages from the page
+// Handle messages from the page
 window.addEventListener('message', async (event) => {
     if (event.source !== window) return;
     if (!event.data.type) return;
 
-    const { type, requestId, ...rest } = event.data;
-    console.log('[Verus] Received message from page:', type, requestId);
+    const { type, payload } = event.data;
+    console.log('[Verus] Received message from page:', type);
 
     try {
-        if (type === 'VERUS_CONNECT_REQUEST') {
-            console.log('[Verus] Connecting...');
-            const response = await browser.runtime.sendMessage({
-                type: 'CONNECT_REQUEST',
-                origin: window.location.origin,
-                requestId
-            });
+        switch (type) {
+            case 'VERUS_CONNECT_REQUEST':
+                console.log('[Verus] Sending connect request to background');
+                const response = await chrome.runtime.sendMessage({ 
+                    type: 'CONNECT_REQUEST',
+                    origin: window.location.origin
+                });
+                console.log('[Verus] Got connect response:', response);
+
+                if (response.error) {
+                    window.postMessage({
+                        type: 'CONNECT_REJECTED',
+                        error: response.error
+                    }, '*');
+                } else if (response.pending) {
+                    console.log('[Verus] Connection request pending approval');
+                    // Don't send any response yet, wait for approval/rejection
+                } else if (response.address) {
+                    window.postMessage({
+                        type: 'CONNECT_APPROVED',
+                        address: response.address
+                    }, '*');
+                }
+                break;
             
-            console.log('[Verus] Connect response:', response);
-            
-            // Forward the response directly
-            window.postMessage({
-                type: 'VERUS_CONNECT_REQUEST_RESPONSE',
-                payload: response
-            }, '*');
-        }
-        else if (type === 'VERUS_GET_BALANCES_REQUEST') {
-            console.log('[Verus] Getting all balances');
-            const response = await browser.runtime.sendMessage({ type, requestId });
-            window.postMessage({
-                type: 'VERUS_GET_BALANCES_REQUEST_RESPONSE',
-                payload: response
-            }, '*');
-        }
-        else if (type === 'VERUS_GET_TOTAL_BALANCE_REQUEST') {
-            console.log('[Verus] Getting total balance');
-            const response = await browser.runtime.sendMessage({ type, requestId });
-            window.postMessage({
-                type: 'VERUS_GET_TOTAL_BALANCE_REQUEST_RESPONSE',
-                payload: response
-            }, '*');
-        }
-        else if (type === 'VERUS_SEND_TRANSACTION_REQUEST') {
-            console.log('[Verus] Processing Verus transaction request:', rest.payload);
-            const response = await browser.runtime.sendMessage({
-                type: 'SEND_VERUS_TRANSACTION',
-                payload: rest.payload,
-                origin: window.location.origin,
-                requestId
-            });
-            
-            window.postMessage({
-                type: 'VERUS_SEND_TRANSACTION_REQUEST_RESPONSE',
-                payload: response
-            }, '*');
-        }
-        else if (type === 'VERUS_SET_CONNECTING') {
-            await browser.runtime.sendMessage({ 
-                type, 
-                payload: rest.payload,
-                requestId 
-            });
+            case 'VERUS_GET_BALANCE':
+                const balanceResponse = await chrome.runtime.sendMessage({
+                    type: 'GET_BALANCE',
+                    payload: payload,
+                    origin: window.location.origin
+                });
+                
+                window.postMessage({
+                    type: 'VERUS_GET_BALANCE_RESPONSE',
+                    result: balanceResponse.error ? null : balanceResponse,
+                    error: balanceResponse.error
+                }, '*');
+                break;
+
+            case 'VERUS_SEND_REQUEST':
+                console.log('[Verus] Sending transaction request to background');
+                const sendResponse = await chrome.runtime.sendMessage({
+                    type: 'SEND_TRANSACTION',
+                    payload: payload,
+                    origin: window.location.origin
+                });
+                
+                window.postMessage({
+                    type: 'VERUS_SEND_RESPONSE',
+                    result: sendResponse.error ? null : { txid: sendResponse.txid },
+                    error: sendResponse.error
+                }, '*');
+                break;
         }
     } catch (error) {
         console.error('[Verus] Content script error:', error);
         window.postMessage({
-            type: `${type}_RESPONSE`,
-            payload: { error: error.message, requestId }
+            type: type === 'VERUS_CONNECT_REQUEST' ? 'CONNECT_REJECTED' : 'VERUS_GET_BALANCE_RESPONSE',
+            error: error.message
         }, '*');
     }
 });
 
-// Listen for messages from the background script
-browser.runtime.onMessage.addListener((message) => {
+// Listen for messages from background script
+chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     console.log('[Verus] Received background message:', message);
     
-    if (message.type === 'CONNECT_RESULT') {
-        window.postMessage({
-            type: 'VERUS_CONNECT_REQUEST_RESPONSE',
-            payload: {
-                status: message.status,
-                address: message.address,
-                chainId: message.chainId,
-                requestId: message.requestId
-            }
-        }, '*');
+    // Forward approval/rejection messages to the page
+    if (message.type === 'CONNECT_APPROVED' || 
+        message.type === 'CONNECT_REJECTED' ||
+        message.type === 'TRANSACTION_APPROVED' ||
+        message.type === 'TRANSACTION_REJECTED') {
+        window.postMessage(message, '*');
     }
-});
-
-// Clean up old pending requests periodically
-setInterval(() => {
-    const now = Date.now();
-    const timeout = 5 * 60 * 1000; // 5 minutes
     
-    for (const [requestId, request] of pendingRequests.entries()) {
-        if (now - request.timestamp > timeout) {
-            pendingRequests.delete(requestId);
-            
-            // Notify provider of timeout
-            window.postMessage({
-                type: 'VERUS_CONNECT_REQUEST_RESPONSE',
-                payload: {
-                    status: 'error',
-                    error: 'Connection request timed out',
-                    requestId
-                }
-            }, '*');
-        }
-    }
-}, 60000); // Check every minute
-
-// Initialize message passing between page and background
-browser.runtime.onConnect.addListener((port) => {
-    console.log('[Verus] Connected to background script');
+    return true;
 });
-
-// Inject the provider when document starts loading
-if (document.readyState === 'loading') {
-    document.addEventListener('DOMContentLoaded', () => {});
-} else {
-}

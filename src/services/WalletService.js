@@ -1,167 +1,142 @@
 import { Buffer } from 'buffer';
 import * as bitgo from '@bitgo/utxo-lib';
-import bip39 from 'bip39';
 import BigInteger from 'bigi';
+import bip39 from 'bip39';
+import crypto from 'crypto';
+import bs58check from 'bs58check';
+import * as ethUtil from 'ethereumjs-util';
 import bcrypt from 'bcryptjs';
-import sha256 from 'js-sha256';
 
-// Get the BitGo library instance
 const lib = bitgo.default;
-const networks = lib.networks;
-const address = lib.address;
 
-// Network configuration for Verus
-const NETWORK = networks.verustest;
+const NETWORK_CONFIG = {
+    verus: lib.networks.verus,
+    verustest: lib.networks.verustest,
+    bitcoin: lib.networks.bitcoin
+};
 
-function seedToPrivateKey(seed, iguana = true) {
-    // Create SHA256 hash of the seed
-    const hash = sha256.create().update(seed);
-    const bytes = hash.array();
+const VERUS_NETWORK = import.meta.env.VITE_VERUS_NETWORK === 'testnet' 
+    ? NETWORK_CONFIG.verustest 
+    : NETWORK_CONFIG.verus;
 
-    // Iguana compatible conversion
-    if (iguana) {
-        bytes[0] &= 248;
-        bytes[31] &= 127;
-        bytes[31] |= 64;
+function seedToWif(seed, network, iguana = true) {
+    let bytes;
+    let isWif = false;
+    
+    try {
+        bytes = bs58check.decode(seed);
+        isWif = true;
+    } catch (e) {
+        const hash = crypto.createHash('sha256').update(seed).digest();
+        bytes = hash;
+
+        if (iguana) {
+            bytes[0] &= 248;
+            bytes[31] &= 127;
+            bytes[31] |= 64;
+        }
     }
 
-    return bytes;
+    const privKey = BigInteger.fromBuffer(bytes);
+    const keyPair = new lib.ECPair(privKey, null, { network });
+
+    return {
+        pub: keyPair.getAddress(),
+        pubHex: keyPair.getPublicKeyBuffer().toString('hex'),
+        priv: keyPair.toWIF()
+    };
 }
 
-export class WalletService {
-    /**
-     * Generate a new wallet with mnemonic phrase, private key, and address
-     * @param {string} mnemonic - Optional mnemonic phrase. If not provided, one will be generated.
-     * @param {string} password - Password to encrypt the wallet
-     * @returns {Promise<Object>} Wallet data including mnemonic, privateKey (WIF), and address
-     */
+function seedToPriv(seed, type = 'btc') {
+    const seedBuf = Buffer.from(seed);
+    const hash = crypto.createHash('sha256').update(seedBuf).digest();
+    
+    if (type === 'eth') {
+        return '0x' + hash.toString('hex');
+    } else {
+        return hash.toString('hex');
+    }
+}
+
+async function deriveWeb3Keypair(seed) {
+    let seedIsEthPrivkey = false;
+    try {
+        if (seed.length === 66 && seed.startsWith('0x')) {
+            const privKeyBuf = Buffer.from(seed.slice(2), 'hex');
+            if (privKeyBuf.length === 32) {
+                seedIsEthPrivkey = true;
+            }
+        }
+    } catch(e) {}
+
+    const electrumKeys = seedToWif(seed, NETWORK_CONFIG.bitcoin, true);
+    const pubKeyBuffer = Buffer.from(electrumKeys.pubHex, 'hex');
+    
+    const addressBuffer = ethUtil.pubToAddress(pubKeyBuffer, true);
+    const ethAddress = ethUtil.toChecksumAddress('0x' + addressBuffer.toString('hex'));
+    
+    const ethPrivKey = seedIsEthPrivkey ? seed : seedToPriv(electrumKeys.priv, 'eth');
+    
+    return {
+        privKey: ethPrivKey,
+        address: ethAddress
+    };
+}
+
+export default class WalletService {
+    static async hashPassword(password) {
+        return bcrypt.hash(password, 10);
+    }
+
+    static async comparePassword(password, hash) {
+        return bcrypt.compare(password, hash);
+    }
+
     static async generateWallet(mnemonic, password) {
         try {
-            // Generate mnemonic if not provided (24 words for extra security)
             if (!mnemonic) {
                 const entropy = crypto.randomBytes(32);
                 mnemonic = bip39.entropyToMnemonic(entropy);
             }
 
-            // Convert mnemonic to private key using sha256
-            const privateKeyBytes = seedToPrivateKey(mnemonic);
-            
-            // Create key pair using private key bytes
-            const privateKey = BigInteger.fromBuffer(Buffer.from(privateKeyBytes));
-            const keyPair = new lib.ECPair(privateKey, null, { network: NETWORK });
-            
-            // Get WIF (Wallet Import Format)
-            const privateKeyWIF = keyPair.toWIF();
-
-            // Generate P2PKH address
-            const pubKeyHash = lib.crypto.hash160(keyPair.getPublicKeyBuffer());
-            const scriptPubKey = lib.script.pubKeyHash.output.encode(pubKeyHash);
-            const verusAddress = lib.address.fromOutputScript(scriptPubKey, NETWORK);
-
-            // Verify address format
-            if (!verusAddress.startsWith('R')) {
-                throw new Error('Generated address does not start with R');
+            if (!bip39.validateMnemonic(mnemonic)) {
+                throw new Error('Invalid mnemonic');
             }
 
-            if (verusAddress.length !== 34) {
-                throw new Error('Generated address length is not 34 characters');
-            }
+            // Generate addresses using agama-wallet-lib approach
+            const vrscKeys = seedToWif(mnemonic, VERUS_NETWORK, true);
+            const btcKeys = seedToWif(mnemonic, NETWORK_CONFIG.bitcoin, true);
+            const ethKeys = await deriveWeb3Keypair(mnemonic);
 
-            // Hash password
-            const hashedPassword = await this.hashPassword(password);
+            const addresses = {
+                VRSC: {
+                    address: vrscKeys.pub,
+                    privateKey: vrscKeys.priv
+                },
+                BTC: {
+                    address: btcKeys.pub,
+                    privateKey: btcKeys.priv
+                },
+                ETH: {
+                    address: ethKeys.address,
+                    privateKey: ethKeys.privKey
+                }
+            };
+
+            const passwordHash = await this.hashPassword(password);
 
             return {
                 mnemonic,
-                privateKey: privateKeyWIF,
-                address: verusAddress,
-                hashedPassword
+                addresses,
+                passwordHash
             };
         } catch (error) {
-            console.error('Error generating wallet:', error);
+            console.error('Wallet generation failed:', error);
             throw error;
         }
     }
 
-    /**
-     * Recover wallet from mnemonic phrase
-     * @param {string} mnemonic - Mnemonic phrase
-     * @param {string} password - Password to encrypt the wallet
-     * @returns {Promise<Object>} Wallet data including privateKey (WIF) and address
-     */
     static async recoverFromMnemonic(mnemonic, password) {
-        try {
-            // Convert mnemonic to private key using sha256
-            const privateKeyBytes = seedToPrivateKey(mnemonic);
-            
-            // Create key pair using private key bytes
-            const privateKey = BigInteger.fromBuffer(Buffer.from(privateKeyBytes));
-            const keyPair = new lib.ECPair(privateKey, null, { network: NETWORK });
-            
-            // Get WIF (Wallet Import Format)
-            const privateKeyWIF = keyPair.toWIF();
-
-            // Generate P2PKH address
-            const pubKeyHash = lib.crypto.hash160(keyPair.getPublicKeyBuffer());
-            const scriptPubKey = lib.script.pubKeyHash.output.encode(pubKeyHash);
-            const verusAddress = lib.address.fromOutputScript(scriptPubKey, NETWORK);
-
-            // Hash password
-            const hashedPassword = await this.hashPassword(password);
-
-            return {
-                privateKey: privateKeyWIF,
-                address: verusAddress,
-                hashedPassword
-            };
-        } catch (error) {
-            console.error('Error recovering wallet:', error);
-            throw error;
-        }
-    }
-
-    /**
-     * Recover wallet from WIF private key
-     * @param {string} wif - Private key in WIF format
-     * @returns {Promise<Object>} Wallet data including address
-     */
-    static async recoverFromWIF(wif) {
-        try {
-            // Create key pair from WIF
-            const keyPair = lib.ECPair.fromWIF(wif, NETWORK);
-            
-            // Get address using P2PKH script
-            const pubKeyHash = lib.crypto.hash160(keyPair.getPublicKeyBuffer());
-            const scriptPubKey = lib.script.pubKeyHash.output.encode(pubKeyHash);
-            const verusAddress = lib.address.fromOutputScript(scriptPubKey, NETWORK);
-
-            return {
-                privateKey: wif,
-                address: verusAddress
-            };
-        } catch (error) {
-            console.error('Error recovering from WIF:', error);
-            throw error;
-        }
-    }
-
-    /**
-     * Hash a password using bcrypt
-     * @param {string} password - Password to hash
-     * @returns {Promise<string>} Hashed password
-     */
-    static async hashPassword(password) {
-        const salt = await bcrypt.genSalt(10);
-        const hash = await bcrypt.hash(password, salt);
-        return hash;
-    }
-
-    /**
-     * Verify a password against a hash
-     * @param {string} password - Password to verify
-     * @param {string} hash - Hash to verify against
-     * @returns {Promise<boolean>} True if password matches hash
-     */
-    static async verifyPassword(password, hash) {
-        return await bcrypt.compare(password, hash);
+        return this.generateWallet(mnemonic, password);
     }
 }

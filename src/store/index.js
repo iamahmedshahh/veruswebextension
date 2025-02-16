@@ -1,8 +1,8 @@
 import { createStore } from 'vuex';
 import wallet from './modules/wallet';
 import currencies from './modules/currencies';
-import identity from './modules/identity';
 import transactions from './modules/transactions';
+import network from './modules/network';
 
 export const store = createStore({
     state: {
@@ -14,6 +14,14 @@ export const store = createStore({
         },
     },
     actions: {
+        async initialize({ dispatch }) {
+            // Initialize network first
+            await dispatch('network/initialize');
+            // Then initialize other modules
+            await dispatch('wallet/initialize');
+            await dispatch('currencies/initialize');
+            await dispatch('transactions/initialize');
+        },
         async updateBalances({ commit, state }) {
             try {
                 commit('SET_LOADING_BALANCES', true);
@@ -29,8 +37,8 @@ export const store = createStore({
     modules: {
         wallet,
         currencies,
-        identity,
-        transactions
+        transactions,
+        network
     }
 });
 

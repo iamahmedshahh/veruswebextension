@@ -33,13 +33,6 @@
                 >
                     NFTs
                 </button>
-                <button 
-                    class="tab-button" 
-                    :class="{ active: activeTab === 'identities' }"
-                    @click="activeTab = 'identities'"
-                >
-                    VerusID
-                </button>
             </div>
 
             <div v-if="activeTab === 'currencies'" class="currency-cards">
@@ -48,7 +41,7 @@
                     :key="currency" 
                     class="currency-card"
                 >
-                    <div class="card-content" @click="$router.push(`/currency/${currency}`)">
+                    <div class="card-content">
                         <div class="card-header">
                             <h3>{{ currency }}</h3>
                             <button 
@@ -67,27 +60,15 @@
                             <div class="address-section">
                                 <span class="address-label">Address:</span>
                                 <div class="address-value">
-                                    <span class="address">{{ address }}</span>
-                                    <button 
-                                        class="copy-button"
-                                        @click.stop="copyToClipboard(address)"
-                                        title="Copy address"
-                                    >
-                                        📋
-                                    </button>
+                                    <span class="address">{{ getAddressForCurrency(currency) }}</span>
+                                    <button class="copy-button" @click.stop="copyToClipboard(getAddressForCurrency(currency))">📋</button>
                                 </div>
                             </div>
                         </div>
                     </div>
                     <div class="action-buttons">
-                        <button class="action-btn send" @click.stop="handleSend(currency)">
-                            <i class="fas fa-arrow-up"></i>
-                            Send
-                        </button>
-                        <button class="action-btn receive" @click.stop="handleReceive(currency)">
-                            <i class="fas fa-arrow-down"></i>
-                            Receive
-                        </button>
+                        <button class="action-btn send" @click.stop="handleSend(currency)">Send</button>
+                        <button class="action-btn receive" @click.stop="handleReceive(currency)">Receive</button>
                     </div>
                 </div>
 
@@ -208,7 +189,6 @@ import LoadingBar from './LoadingBar.vue';
 import Settings from './Settings.vue';
 import CurrencySelector from './CurrencySelector.vue';
 import NFTGallery from './NFTGallery.vue';
-import IdentityManager from './Identity/IdentityManager.vue';
 import { sendCurrency, estimateFee, validateAddress } from '../utils/transaction';
 
 export default {
@@ -220,7 +200,6 @@ export default {
         Settings,
         CurrencySelector,
         NFTGallery,
-        IdentityManager
     },
 
     setup() {
@@ -246,6 +225,14 @@ export default {
         const balances = computed(() => store.state.currencies.balances);
         const isLoadingBalances = computed(() => store.state.currencies.loading);
         const canAddMoreCurrencies = computed(() => store.getters['currencies/canAddMoreCurrencies']);
+
+        const btcAddress = computed(() => {
+            return store.state.wallet.addresses?.BTC?.address || 'Not available';
+        });
+
+        const ethAddress = computed(() => {
+            return store.state.wallet.addresses?.ETH?.address || 'Not available';
+        });
 
         const totalBalance = computed(() => {
             return Object.values(balances.value).reduce((acc, balance) => acc + balance, 0);
@@ -372,6 +359,18 @@ export default {
             }
         };
 
+        const getAddressForCurrency = (currency) => {
+            const addresses = store.state.wallet.addresses;
+            if (!addresses) return 'Not available';
+            
+            // Handle both mainnet and testnet VRSC
+            if (currency === 'VRSCTEST' || currency === 'VRSC') {
+                return addresses.VRSC?.address || 'Not available';
+            }
+            
+            return addresses[currency]?.address || 'Not available';
+        };
+
         watch(showReceiveModal, async (isVisible) => {
             if (isVisible && address.value) {
                 try {
@@ -412,22 +411,29 @@ export default {
         });
 
         return {
-            walletLoading,
-            walletError,
-            address,
-            isLocked,
             showSettings,
             showCurrencySelector,
             showSendModal,
             showReceiveModal,
-            selectedCurrencies,
             selectedCurrencyForAction,
             recipientAddress,
             amount,
-            estimatedFee,
+            error,
             isLoading,
+            estimatedFee,
+            receiveQrCode,
+            activeTab,
+            walletLoading,
+            walletError,
+            address,
+            isLocked,
+            selectedCurrencies,
+            balances,
             isLoadingBalances,
             canAddMoreCurrencies,
+            btcAddress,
+            ethAddress,
+            totalBalance,
             getBalance,
             formatBalance,
             copyToClipboard,
@@ -437,9 +443,7 @@ export default {
             handleReceive,
             executeSend,
             updateEstimatedFee,
-            receiveQrCode,
-            totalBalance,
-            activeTab
+            getAddressForCurrency,
         };
     }
 };

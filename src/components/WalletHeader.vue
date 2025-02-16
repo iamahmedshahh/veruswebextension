@@ -3,6 +3,11 @@
     <div class="actions-container">
       <div class="network-status">
         <span class="status-dot" :class="{ 'connected': isConnected }"></span>
+        <select v-model="selectedNetwork" @change="onNetworkChange" class="network-selector" :disabled="!isInitialized">
+          <option v-for="(network, key) in networks" :key="key" :value="key">
+            {{ network.name }}
+          </option>
+        </select>
         {{ networkName }}
       </div>
       <div class="icon-buttons">
@@ -135,16 +140,18 @@
 </template>
 
 <script setup>
-import { ref, onMounted, watch, computed } from 'vue'
+import { ref, computed, onMounted, watch } from 'vue'
 import { useStore } from 'vuex'
 import browser from 'webextension-polyfill'
 import QRCode from 'qrcode'
 import ConnectedSites from './ConnectedSites.vue'
+import { NETWORKS } from '../config/networks'
 
 const store = useStore()
 const showDonateModal = ref(false)
-const isConnected = ref(false)
-const networkName = ref('Testnet')
+const isConnected = computed(() => store.state.wallet.isConnected)
+const isLocked = computed(() => store.state.wallet.isLocked)
+const networkName = computed(() => store.getters['network/currentNetworkName'])
 const donateAddress = 'RRQHGqgKivuwvWgeWAvTnGg5VJr1aWNRx5'
 const connectedSitesRef = ref(null)
 const activeTab = ref('vrsc')
@@ -152,11 +159,18 @@ const btcQrCode = ref(null)
 const segwitQrCode = ref(null)
 const vrscQrCode = ref(null)
 
-const props = defineProps({
-  isLocked: {
-    type: Boolean,
-    required: true
-  }
+const networks = computed(() => NETWORKS)
+const selectedNetwork = computed({
+  get: () => store.getters['network/currentNetwork'],
+  set: (value) => store.dispatch('network/changeNetwork', value)
+})
+const isInitialized = computed(() => store.getters['network/isInitialized'])
+
+onMounted(async () => {
+  await store.dispatch('network/initialize')
+  await checkConnection()
+  // Check connection every 30 seconds
+  setInterval(checkConnection, 30000)
 })
 
 async function checkConnection() {
@@ -171,8 +185,8 @@ async function checkConnection() {
 
 async function toggleLock() {
   try {
-    console.log('Toggle lock called, current state:', props.isLocked);
-    if (!props.isLocked) {
+    console.log('Toggle lock called, current state:', isLocked.value);
+    if (!isLocked.value) {
       // If unlocked, lock the wallet
       console.log('Locking wallet...');
       await store.dispatch('wallet/lock');
@@ -244,12 +258,15 @@ async function generateQRCode(type) {
   }
 }
 
-// Initial connection check
-onMounted(async () => {
-  await checkConnection()
-  // Check connection every 30 seconds
-  setInterval(checkConnection, 30000)
-})
+const onNetworkChange = async (event) => {
+  try {
+    await store.dispatch('network/changeNetwork', event.target.value)
+  } catch (error) {
+    console.error('Failed to change network:', error)
+    // Revert the selection
+    event.target.value = store.getters['network/currentNetwork']
+  }
+}
 </script>
 
 <style scoped>
@@ -452,6 +469,27 @@ onMounted(async () => {
 .copy-icon:hover {
   background: var(--hover-color);
   color: var(--primary-color);
+}
+
+.network-selector {
+  background: transparent;
+  border: none;
+  color: inherit;
+  font-size: inherit;
+  padding: 2px 5px;
+  margin-left: 5px;
+  border-radius: 4px;
+  cursor: pointer;
+}
+
+.network-selector:focus {
+  outline: none;
+  background: rgba(255, 255, 255, 0.1);
+}
+
+.network-selector:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
 }
 
 :root {
