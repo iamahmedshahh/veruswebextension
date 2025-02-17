@@ -24,8 +24,11 @@ export default defineConfig({
       manifest: {
         manifest_version: 3,
         name: 'Layer VOne (Testnet)',
-        version: '0.0.4',
+        version: '0.0.5',
         description: 'Help me make the extension that brings native Layer 1 and Web 3 together on The Verus Blockchain',
+        icons: {
+          "128": "icons/logo.png"
+        },
         permissions: [
           'storage',
           'activeTab'

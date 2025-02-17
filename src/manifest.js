@@ -1,13 +1,13 @@
 export function getManifest() {
   return {
     manifest_version: 3,
-    name: 'Verus Web Wallet',
+    name: 'Layer VOne (Testnet)',
     description: 'Worlds first secure web wallet for Verus Blockchain empowering layer 1 tech',
     version: '1.0.1',
     icons: {
-      "16": "icons/icon16.png",
-      "48": "icons/icon48.png",
-      "128": "icons/icon128.png"
+      "16": "icons/logo.png",
+      "48": "icons/logo.png",
+      "128": "icons/logo.png"
     },
     background: {
       service_worker: 'src/background.js',
@@ -16,10 +16,10 @@ export function getManifest() {
     action: {
       default_popup: 'popup.html',
       default_icon: {
-        "16": "icons/icon16.png",
-        "32": "icons/icon48.png",
-        "48": "icons/icon48.png",
-        "128": "icons/icon128.png"
+        "16": "icons/logo.png",
+        "32": "icons/logo.png",
+        "48": "icons/logo.png",
+        "128": "icons/logo.png"
       }
     },
     permissions: [

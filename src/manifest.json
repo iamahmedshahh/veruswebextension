@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
   "name": "Layer VOne (Testnet)",
-  "version": "0.0.4",
-  "description": "Worlds first secure web wallet for Verus Blockchain empowering layer 1 tech",
+  "version": "0.0.5",
+  "description": "Help me make the extension that brings native Layer 1 and Web 3 together on The Verus Blockchain",
   "permissions": [
     "storage",
     "activeTab",
@@ -15,9 +15,9 @@
   "action": {
     "default_popup": "popup.html",
     "default_icon": {
-      "16": "icons/icon16.png",
-      "48": "icons/icon48.png",
-      "128": "icons/icon128.png"
+      "16": "icons/logo.png",
+      "48": "icons/logo.png",
+      "128": "icons/logo.png"
     }
   },
   "background": {
@@ -46,8 +46,8 @@
     }
   ],
   "icons": {
-    "16": "icons/icon16.png",
-    "48": "icons/icon48.png",
-    "128": "icons/icon128.png"
+    "16": "icons/logo.png",
+    "48": "icons/logo.png",
+    "128": "icons/logo.png"
   }
 }
