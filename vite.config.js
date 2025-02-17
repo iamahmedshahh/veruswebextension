@@ -27,76 +27,64 @@ export default defineConfig({
         version: '0.0.5',
         description: 'Help me make the extension that brings native Layer 1 and Web 3 together on The Verus Blockchain',
         icons: {
+          "16": "icons/logo.png",
+          "48": "icons/logo.png",
           "128": "icons/logo.png"
         },
         permissions: [
           'storage',
-          'activeTab'
+          'activeTab',
+          'scripting',
+          'tabs',
+          'windows'
         ],
         host_permissions: [
-          "http://localhost:5173/*",
-          "http://localhost:3000/*"
+          "http://localhost:*/*",
+          "https://*/*"
         ],
         action: {
-          default_popup: 'popup.html'
+          default_popup: 'popup.html',
+          default_icon: {
+            "16": "icons/logo.png",
+            "48": "icons/logo.png",
+            "128": "icons/logo.png"
+          }
         },
         background: {
-          service_worker: 'src/background.js',
-          type: 'module'
+          service_worker: 'src/background.js'
         },
         content_scripts: [
           {
-            matches: [
-              "http://localhost:5173/*",
-              "http://localhost:3000/*"
-            ],
+            matches: ["http://localhost:*/*", "https://*/*"],
             js: ["src/contentScript.js"],
             run_at: "document_start"
           }
         ],
-        web_accessible_resources: [{
-          resources: ["provider.js"],
-          matches: [
-            "http://localhost:5173/*",
-            "http://localhost:3000/*"
-          ]
-        }],
-        content_security_policy: {
-          extension_pages: "script-src 'self' 'wasm-unsafe-eval'; object-src 'self'"
-        },
-      },
-      buildInfo: {
-        input: {
-          popup: path.resolve(__dirname, 'popup.html')
-        }
+        web_accessible_resources: [
+          {
+            resources: ["src/provider.js"],
+            matches: ["http://localhost:*/*", "https://*/*"]
+          }
+        ]
       }
     })
   ],
   resolve: {
     alias: {
       '@': srcDir,
-      'stream': 'stream-browserify',
-      'crypto': 'crypto-browserify',
-      'buffer': 'buffer',
-      'bitcoin-ops/evals.json': path.resolve(__dirname, 'src/utils/bitcoin-ops-evals.json')
-    }
+    },
   },
   build: {
     outDir: 'dist',
-    emptyOutDir: true,
-    sourcemap: process.env.NODE_ENV === 'development',
-    minify: true,
     rollupOptions: {
       input: {
-        popup: path.resolve(__dirname, 'popup.html'),
-        background: path.resolve(srcDir, 'background.js'),
-        contentScript: path.resolve(srcDir, 'contentScript.js'),
-        injectProvider: path.resolve(srcDir, 'injectProvider.js'),
-        provider: path.resolve(srcDir, 'provider.js')
+        background: path.resolve(__dirname, 'src/background.js'),
+        contentScript: path.resolve(__dirname, 'src/contentScript.js'),
+        provider: path.resolve(__dirname, 'src/provider.js')
       },
       output: {
-        entryFileNames: '[name].js'
+        entryFileNames: 'src/[name].js'
       }
-    },
+    }
   }
 });

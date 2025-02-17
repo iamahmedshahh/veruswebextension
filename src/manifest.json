@@ -6,7 +6,9 @@
   "permissions": [
     "storage",
     "activeTab",
-    "scripting"
+    "scripting",
+    "tabs",
+    "windows"
   ],
   "host_permissions": [
     "http://localhost:*/*",
@@ -21,8 +23,7 @@
     }
   },
   "background": {
-    "service_worker": "src/background.js",
-    "type": "module"
+    "service_worker": "src/background.js"
   },
   "content_scripts": [
     {
@@ -37,12 +38,11 @@
   ],
   "web_accessible_resources": [
     {
-      "resources": ["provider.js"],
+      "resources": ["src/provider.js"],
       "matches": [
         "http://localhost:*/*",
         "https://*/*"
-      ],
-      "use_dynamic_url": true
+      ]
     }
   ],
   "icons": {

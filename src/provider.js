@@ -41,11 +41,11 @@ class VerusProvider {
             window.addEventListener('message', handleMessage);
             window.postMessage({ type: 'VERUS_CONNECT_REQUEST' }, '*');
 
-            // Increase timeout to 5 minutes to give user time to approve
+            // Timeout after 5 minutes
             setTimeout(() => {
                 window.removeEventListener('message', handleMessage);
                 reject(new Error('Connection request timed out. Please try again.'));
-            }, 5 * 60 * 1000); // 5 minutes
+            }, 5 * 60 * 1000);
         });
     }
 
@@ -69,88 +69,48 @@ class VerusProvider {
     }
 
     /**
-     * Get balance
-     * @returns {Promise<string>}
+     * Get balance for the connected address
+     * @param {string} currency - Currency to get balance for
+     * @returns {Promise<string>} Balance in smallest unit
      */
-    async getBalance() {
+    async getBalance(currency) {
         if (!this._connected) {
             throw new Error('Not connected');
+        }
+
+        if (!currency) {
+            throw new Error('Currency parameter is required');
         }
 
         return new Promise((resolve, reject) => {
             const handleMessage = (event) => {
                 if (event.source !== window) return;
-                const { type, result, error } = event.data;
+                const { type, balance, error } = event.data;
 
                 if (type === 'VERUS_GET_BALANCE_RESPONSE') {
                     window.removeEventListener('message', handleMessage);
                     if (error) {
                         reject(new Error(error));
                     } else {
-                        resolve(result.balance);
+                        resolve(balance);
                     }
                 }
             };
 
             window.addEventListener('message', handleMessage);
             window.postMessage({ 
-                type: 'VERUS_GET_BALANCE',
-                payload: { address: this._address }
+                type: 'VERUS_GET_BALANCE_REQUEST',
+                payload: { 
+                    address: this._address,
+                    currency 
+                }
             }, '*');
 
-            // Set timeout for 30 seconds
+            // Timeout after 30 seconds
             setTimeout(() => {
                 window.removeEventListener('message', handleMessage);
                 reject(new Error('Get balance request timed out'));
             }, 30000);
-        });
-    }
-
-    /**
-     * Send transaction
-     * @param {Object} params
-     * @param {string} params.to
-     * @param {string} params.amount
-     * @param {string} [params.currency='VRSCTEST']
-     * @param {string} [params.memo]
-     * @returns {Promise<{txid: string}>}
-     */
-    async send(params) {
-        if (!this._connected) throw new Error('Not connected');
-        if (!params.to || !params.amount) throw new Error('Missing required parameters: to and amount');
-
-        return new Promise((resolve, reject) => {
-            const handleMessage = (event) => {
-                if (event.source !== window) return;
-                const { type, result, error } = event.data;
-                if (type === 'VERUS_SEND_RESPONSE') {
-                    window.removeEventListener('message', handleMessage);
-                    if (error) {
-                        reject(new Error(error));
-                    } else if (!result || !result.txid) {
-                        reject(new Error('Invalid transaction response'));
-                    } else {
-                        resolve(result);
-                    }
-                }
-            };
-
-            window.addEventListener('message', handleMessage);
-            window.postMessage({
-                type: 'VERUS_SEND_REQUEST',
-                payload: {
-                    from: this._address,
-                    to: params.to,
-                    amount: params.amount,
-                    currency: params.currency || 'VRSCTEST',
-                    memo: params.memo
-                }
-            }, '*');
-
-            setTimeout(() => {
-                window.removeEventListener('message', handleMessage);
-                reject(new Error('Transaction request timed out. Please try again.'));
-            }, 5 * 60 * 1000);
         });
     }
 }

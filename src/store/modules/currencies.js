@@ -53,6 +53,23 @@ export default {
             });
             state.balances = updatedBalances;
             console.log('Updated balances in store:', updatedBalances);
+
+            // Persist balances to chrome.storage
+            chrome.storage.local.get(['balances'], (result) => {
+                const existingBalances = result.balances || {};
+                const address = this.state.wallet.address;
+                if (address) {
+                    // Store balances by currency and address
+                    const newBalances = { ...existingBalances };
+                    Object.entries(updatedBalances).forEach(([currency, balance]) => {
+                        newBalances[currency] = {
+                            ...newBalances[currency],
+                            [address]: balance.toString()
+                        };
+                    });
+                    chrome.storage.local.set({ balances: newBalances });
+                }
+            });
         },
 
         SET_LOADING(state, loading) {
@@ -78,23 +95,29 @@ export default {
 
         async loadPersistedState({ commit, rootState }) {
             try {
-                const { selectedCurrencies } = await storage.get(['selectedCurrencies']);
+                const { selectedCurrencies, balances } = await storage.get(['selectedCurrencies', 'balances']);
                 const defaultCurrencies = rootState.network.currentNetwork === 'MAINNET' 
                     ? MAINNET_DEFAULT_CURRENCIES 
                     : TESTNET_DEFAULT_CURRENCIES;
                 
                 if (selectedCurrencies && selectedCurrencies.length > 0) {
                     commit('SET_SELECTED_CURRENCIES', selectedCurrencies);
-                    return { selectedCurrencies };
+                } else {
+                    // Set defaults if no persisted state
+                    commit('SET_SELECTED_CURRENCIES', defaultCurrencies);
                 }
-                
-                // Set defaults if no persisted state
-                commit('SET_SELECTED_CURRENCIES', defaultCurrencies);
-                return null;
+
+                // Load persisted balances if available
+                if (balances && rootState.wallet.address) {
+                    const loadedBalances = {};
+                    Object.entries(balances).forEach(([currency, addressBalances]) => {
+                        loadedBalances[currency] = addressBalances[rootState.wallet.address] || '0';
+                    });
+                    commit('SET_BALANCES', loadedBalances);
+                }
             } catch (error) {
                 console.error('Failed to load persisted state:', error);
                 commit('SET_ERROR', 'Failed to load saved currencies');
-                return null;
             }
         },
 

@@ -1,12 +1,26 @@
 console.log('[Verus] Content script loaded');
 
 // Inject provider script
-const script = document.createElement('script');
-script.src = chrome.runtime.getURL('provider.js');
-script.onload = () => {
-    console.log('[Verus] Provider script loaded successfully');
+const injectProvider = () => {
+    try {
+        const script = document.createElement('script');
+        script.src = chrome.runtime.getURL('src/provider.js');
+        script.onload = () => {
+            console.log('[Verus] Provider script loaded successfully');
+            // Notify that the provider is ready
+            window.postMessage({ type: 'VERUS_PROVIDER_READY' }, '*');
+        };
+        script.onerror = (error) => {
+            console.error('[Verus] Failed to load provider script:', error);
+        };
+        (document.head || document.documentElement).appendChild(script);
+    } catch (error) {
+        console.error('[Verus] Failed to inject provider:', error);
+    }
 };
-(document.head || document.documentElement).appendChild(script);
+
+// Inject provider as soon as possible
+injectProvider();
 
 // Handle messages from the page
 window.addEventListener('message', async (event) => {
@@ -33,7 +47,6 @@ window.addEventListener('message', async (event) => {
                     }, '*');
                 } else if (response.pending) {
                     console.log('[Verus] Connection request pending approval');
-                    // Don't send any response yet, wait for approval/rejection
                 } else if (response.address) {
                     window.postMessage({
                         type: 'CONNECT_APPROVED',
@@ -41,33 +54,20 @@ window.addEventListener('message', async (event) => {
                     }, '*');
                 }
                 break;
-            
-            case 'VERUS_GET_BALANCE':
+
+            case 'VERUS_GET_BALANCE_REQUEST':
+                console.log('[Verus] Sending balance request to background');
                 const balanceResponse = await chrome.runtime.sendMessage({
                     type: 'GET_BALANCE',
-                    payload: payload,
+                    payload,
                     origin: window.location.origin
                 });
-                
+                console.log('[Verus] Got balance response:', balanceResponse);
+
                 window.postMessage({
                     type: 'VERUS_GET_BALANCE_RESPONSE',
-                    result: balanceResponse.error ? null : balanceResponse,
+                    balance: balanceResponse.balance,
                     error: balanceResponse.error
-                }, '*');
-                break;
-
-            case 'VERUS_SEND_REQUEST':
-                console.log('[Verus] Sending transaction request to background');
-                const sendResponse = await chrome.runtime.sendMessage({
-                    type: 'SEND_TRANSACTION',
-                    payload: payload,
-                    origin: window.location.origin
-                });
-                
-                window.postMessage({
-                    type: 'VERUS_SEND_RESPONSE',
-                    result: sendResponse.error ? null : { txid: sendResponse.txid },
-                    error: sendResponse.error
                 }, '*');
                 break;
         }
@@ -84,11 +84,10 @@ window.addEventListener('message', async (event) => {
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     console.log('[Verus] Received background message:', message);
     
-    // Forward approval/rejection messages to the page
+    // Forward messages to the page
     if (message.type === 'CONNECT_APPROVED' || 
         message.type === 'CONNECT_REJECTED' ||
-        message.type === 'TRANSACTION_APPROVED' ||
-        message.type === 'TRANSACTION_REJECTED') {
+        message.type === 'VERUS_BALANCE_UPDATED') {
         window.postMessage(message, '*');
     }
     
