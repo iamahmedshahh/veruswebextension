@@ -149,37 +149,6 @@ export async function getVerusAddress() {
 }
 
 /**
- * Get balance for the connected address
- * @param {string} currency - Currency to get balance for (e.g., 'VRSCTEST', 'VRSC', etc.)
- * @returns {Promise<string|null>} Balance in smallest unit or null if not connected
- * @throws {Error} If currency parameter is not provided
- */
-export async function getVerusBalance(currency) {
-    if (!currency) {
-        throw new Error('Currency parameter is required');
-    }
-    if (!isVerusConnected()) return null;
-    try {
-        return await window.verus.getBalance(currency);
-    } catch (error) {
-        console.error('Failed to get Verus balance:', error);
-        return null;
-    }
-}
-
-/**
- * Connect to Verus wallet
- * @returns {Promise<{address: string}>} Object containing the connected address
- * @throws {Error} If connection fails or extension is not installed
- */
-export async function connectVerus() {
-    if (!isVerusInstalled()) {
-        throw new Error('Verus extension not installed');
-    }
-    return await window.verus.connect();
-}
-
-/**
  * Vue composable for Verus wallet integration
  * @returns {Object} Hook methods and state
  */
@@ -191,6 +160,10 @@ export function useVerusWallet() {
     const isLoading = ref(false);
     const error = ref(null);
     const refreshingCurrencies = new Set();
+    const transactionStatus = ref(null);
+
+    // Constants
+    const DEFAULT_CURRENCY = 'VRSCTEST';
 
     // Initialize state
     const checkExtension = async () => {
@@ -211,7 +184,7 @@ export function useVerusWallet() {
         try {
             isLoading.value = true;
             error.value = null;
-            const result = await connectVerus();
+            const result = await window.verus.connect();
             isConnected.value = true;
             address.value = result.address;
         } catch (err) {
@@ -225,42 +198,32 @@ export function useVerusWallet() {
     };
 
     /**
-     * Get balance for specific currency
-     * @param {string} currency - Currency to get balance for
-     * @returns {Promise<string|null>} Balance in smallest unit or null if not connected
+     * Get balance for connected address
+     * @param {string} [currency=VRSCTEST] - Currency to get balance for
+     * @returns {Promise<string>} Balance in smallest unit
      */
     const getBalance = async (currency) => {
-        if (!currency) {
-            throw new Error('Currency parameter is required');
-        }
         if (!isConnected.value) return null;
 
-        // Prevent duplicate requests
-        if (refreshingCurrencies.has(currency)) {
-            return balances.value[currency];
-        }
-
         try {
-            refreshingCurrencies.add(currency);
-            const balance = await getVerusBalance(currency);
-            if (balance !== null) {
-                balances.value[currency] = balance;
+            const response = await window.verus.getBalance(currency);
+            if (response !== null) {
+                balances.value[currency] = response;
             }
-            return balance;
+            return response;
         } catch (err) {
             console.error(`Failed to get balance for ${currency}:`, err);
+            error.value = err.message;
             return null;
-        } finally {
-            refreshingCurrencies.delete(currency);
         }
     };
 
     /**
      * Refresh balances for specified currencies
-     * @param {string[]} currencies - Array of currency codes to refresh
+     * @param {string[]} [currencies=['VRSCTEST']] - Array of currency codes to refresh
      * @returns {Promise<void>}
      */
-    const refreshBalances = debounce(async (currencies) => {
+    const refreshBalances = debounce(async (currencies = [DEFAULT_CURRENCY]) => {
         if (!isConnected.value || !currencies?.length) return;
 
         try {
@@ -269,7 +232,7 @@ export function useVerusWallet() {
                     .filter(currency => !refreshingCurrencies.has(currency))
                     .map(async (currency) => ({
                         currency,
-                        balance: await getVerusBalance(currency)
+                        balance: await getBalance(currency)
                     }))
             );
 
@@ -281,40 +244,79 @@ export function useVerusWallet() {
         } catch (err) {
             console.error('Failed to refresh balances:', err);
         }
-    }, 1000); // Debounce for 1 second
+    }, 1000);
 
-    // Get current connection status
-    const getConnectionStatus = () => {
-        if (!isInstalled.value) return 'not_installed';
-        if (isLoading.value) return 'connecting';
-        if (isConnected.value) return 'connected';
-        return 'disconnected';
+    /**
+     * Send transaction
+     * @param {Object} params - Transaction parameters
+     * @param {string} params.to - Recipient address
+     * @param {string|number} params.amount - Amount to send
+     * @param {string} [params.currency=VRSCTEST] - Currency to send
+     * @param {string} [params.memo] - Optional memo/note
+     * @returns {Promise<string>} Transaction ID
+     */
+    const sendTransaction = async (params) => {
+        if (!isConnected.value) {
+            throw new Error('Not connected');
+        }
+
+        try {
+            transactionStatus.value = 'pending';
+            const result = await window.verus.sendTransaction({
+                to: params.to,
+                amount: params.amount.toString(),
+                currency: params.currency || DEFAULT_CURRENCY,
+                memo: params.memo
+            });
+            
+            if (result.error) {
+                throw new Error(result.error);
+            }
+            
+            if (result.txid) {
+                transactionStatus.value = 'success';
+                return result.txid;
+            }
+            
+            throw new Error('Transaction failed');
+        } catch (err) {
+            transactionStatus.value = 'error';
+            error.value = err.message;
+            throw err;
+        }
     };
 
-    // Handle provider ready event
-    const handleProviderReady = () => {
-        checkExtension();
+    /**
+     * Estimate transaction fee
+     * @param {Object} params - Transaction parameters
+     * @param {string|number} params.amount - Amount to send
+     * @param {string} [params.currency='VRSCTEST'] - Currency to send
+     * @returns {Promise<string>} Estimated fee
+     */
+    const estimateFee = async (params) => {
+        if (!isConnected.value) {
+            throw new Error('Not connected');
+        }
+
+        try {
+            return await window.verus.estimateFee(params);
+        } catch (err) {
+            error.value = err.message;
+            throw err;
+        }
     };
 
-    // Handle messages from content script
-    const handleMessage = (event) => {
-        if (event.source !== window) return;
-        if (!event.data.type) return;
-
-        switch (event.data.type) {
-            case 'VERUS_PROVIDER_READY':
-                handleProviderReady();
-                break;
-            case 'VERUS_BALANCE_UPDATED':
-                if (event.data.currency && event.data.balance !== undefined) {
-                    balances.value[event.data.currency] = event.data.balance;
-                }
-                break;
-            case 'REFRESH_BALANCES':
-                if (event.data.payload?.currency) {
-                    refreshBalances([event.data.payload.currency]);
-                }
-                break;
+    /**
+     * Validate address
+     * @param {string} address - Address to validate
+     * @returns {Promise<boolean>} True if address is valid
+     */
+    const validateAddress = async (address) => {
+        try {
+            return await window.verus.validateAddress(address);
+        } catch (err) {
+            console.error('Address validation error:', err);
+            return false;
         }
     };
 
@@ -326,7 +328,7 @@ export function useVerusWallet() {
         // Start auto-refresh interval
         const refreshInterval = setInterval(() => {
             if (isConnected.value) {
-                refreshBalances(['VRSCTEST']);
+                refreshBalances([DEFAULT_CURRENCY]);
             }
         }, 10000); // 10 seconds
 
@@ -337,6 +339,30 @@ export function useVerusWallet() {
         });
     });
 
+    // Handle messages from content script
+    const handleMessage = (event) => {
+        if (event.source !== window) return;
+        if (!event.data.type) return;
+
+        switch (event.data.type) {
+            case 'VERUS_PROVIDER_READY':
+                checkExtension();
+                break;
+            case 'VERUS_BALANCE_UPDATED':
+                if (event.data.currency && event.data.balance !== undefined) {
+                    balances.value[event.data.currency] = event.data.balance;
+                }
+                break;
+            case 'VERUS_TRANSACTION_APPROVED':
+                transactionStatus.value = 'success';
+                break;
+            case 'VERUS_TRANSACTION_REJECTED':
+                transactionStatus.value = 'error';
+                error.value = event.data.error;
+                break;
+        }
+    };
+
     return {
         // State
         address,
@@ -345,72 +371,18 @@ export function useVerusWallet() {
         isInstalled,
         isLoading,
         error,
+        transactionStatus,
 
         // Methods
         connect,
         getBalance,
-        refreshBalances,
-        getConnectionStatus
+        sendTransaction
     };
 }
-
-// Example usage in Vue component:
-/*
-import { useVerusWallet } from '@/hooks/useVerusWallet';
-
-export default {
-    setup() {
-        const {
-            address,
-            balances,
-            isConnected,
-            isInstalled,
-            isLoading,
-            error,
-            connect,
-            getBalance,
-            refreshBalances,
-            getConnectionStatus
-        } = useVerusWallet();
-
-        // Define currencies you want to track
-        const currencies = ['VRSCTEST'];
-
-        // Get initial balances
-        onMounted(async () => {
-            if (isConnected.value) {
-                await refreshBalances(currencies);
-            }
-        });
-
-        // Watch for connection changes
-        watch(isConnected, async (connected) => {
-            if (connected) {
-                await refreshBalances(currencies);
-            }
-        });
-
-        return {
-            address,
-            balances,
-            isConnected,
-            isInstalled,
-            isLoading,
-            error,
-            connect,
-            getBalance,
-            refreshBalances,
-            getConnectionStatus
-        };
-    }
-};
-*/
 
 export { 
     isVerusInstalled, 
     isVerusConnected, 
     getVerusAddress, 
-    getVerusBalance, 
-    connectVerus, 
     useVerusWallet 
 };

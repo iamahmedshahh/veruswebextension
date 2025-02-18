@@ -70,11 +70,51 @@ window.addEventListener('message', async (event) => {
                     error: balanceResponse.error
                 }, '*');
                 break;
+
+            case 'VERUS_SEND_TRANSACTION_REQUEST':
+                console.log('[Verus] Sending transaction request to background');
+                const txResponse = await chrome.runtime.sendMessage({
+                    type: 'VERUS_SEND_TRANSACTION_REQUEST',
+                    payload,
+                    origin: window.location.origin
+                });
+                console.log('[Verus] Got transaction response:', txResponse);
+
+                window.postMessage({
+                    type: txResponse.success ? 'VERUS_TRANSACTION_APPROVED' : 'VERUS_TRANSACTION_REJECTED',
+                    txid: txResponse.txid,
+                    error: txResponse.error
+                }, '*');
+                break;
+
+            case 'VERUS_ESTIMATE_FEE_REQUEST':
+                console.log('[Verus] Sending fee estimation request to background');
+                const feeResponse = await chrome.runtime.sendMessage({
+                    type: 'VERUS_ESTIMATE_FEE_REQUEST',
+                    payload,
+                    origin: window.location.origin
+                });
+                console.log('[Verus] Got fee response:', feeResponse);
+
+                window.postMessage({
+                    type: 'VERUS_ESTIMATE_FEE_RESPONSE',
+                    fee: feeResponse.fee,
+                    error: feeResponse.error
+                }, '*');
+                break;
         }
     } catch (error) {
         console.error('[Verus] Content script error:', error);
+        // Send appropriate error response based on request type
+        const errorResponse = {
+            'VERUS_CONNECT_REQUEST': 'CONNECT_REJECTED',
+            'VERUS_GET_BALANCE_REQUEST': 'VERUS_GET_BALANCE_RESPONSE',
+            'VERUS_SEND_TRANSACTION_REQUEST': 'VERUS_TRANSACTION_REJECTED',
+            'VERUS_ESTIMATE_FEE_REQUEST': 'VERUS_ESTIMATE_FEE_RESPONSE'
+        };
+        
         window.postMessage({
-            type: type === 'VERUS_CONNECT_REQUEST' ? 'CONNECT_REJECTED' : 'VERUS_GET_BALANCE_RESPONSE',
+            type: errorResponse[type] || 'VERUS_ERROR',
             error: error.message
         }, '*');
     }
@@ -84,10 +124,15 @@ window.addEventListener('message', async (event) => {
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     console.log('[Verus] Received background message:', message);
     
-    // Forward messages to the page
-    if (message.type === 'CONNECT_APPROVED' || 
-        message.type === 'CONNECT_REJECTED' ||
-        message.type === 'VERUS_BALANCE_UPDATED') {
+    // Forward all relevant messages to the page
+    if ([
+        'CONNECT_APPROVED',
+        'CONNECT_REJECTED',
+        'VERUS_BALANCE_UPDATED',
+        'VERUS_TRANSACTION_APPROVED',
+        'VERUS_TRANSACTION_REJECTED',
+        'VERUS_ESTIMATE_FEE_RESPONSE'
+    ].includes(message.type)) {
         window.postMessage(message, '*');
     }
     

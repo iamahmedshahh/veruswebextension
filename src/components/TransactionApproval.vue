@@ -101,8 +101,8 @@
 <script>
 import { ref, computed, onMounted } from 'vue';
 import browser from 'webextension-polyfill';
-import { isVerusID, estimateFee } from '../utils/transaction';
 import LoadingBar from './LoadingBar.vue';
+import { estimateFee, isVerusID } from '../utils/transaction';
 
 export default {
   name: 'TransactionApproval',
@@ -132,19 +132,10 @@ export default {
 
     // Computed Properties
     const timestamp = computed(() => requestData.value?.timestamp || Date.now());
-    const fromAddress = computed(() => {
-        const data = requestData.value?.payload;
-        return data?.fromAddress || data?.from || '';
-    });
-    const toAddress = computed(() => {
-        const data = requestData.value?.payload;
-        return data?.toAddress || data?.to || '';
-    });
-    const amount = computed(() => {
-        const amt = requestData.value?.payload?.amount;
-        return amt ? parseFloat(amt) : 0;
-    });
-    const currency = computed(() => requestData.value?.payload?.currency || 'VRSCTEST');
+    const fromAddress = computed(() => requestData.value?.fromAddress);
+    const toAddress = computed(() => requestData.value?.toAddress);
+    const amount = computed(() => requestData.value?.amount);
+    const currency = computed(() => requestData.value?.currency);
     const fee = computed(() => estimatedFee.value ? parseFloat(estimatedFee.value) : 0);
     const totalAmount = computed(() => Number(amount.value) + Number(fee.value));
     const balanceAfter = computed(() => {
@@ -210,57 +201,37 @@ export default {
           requestId: props.requestId
         });
 
-        if (response.error) {
-          throw new Error(response.error);
+        if (!response.success || response.error) {
+          throw new Error(response.error || 'Failed to get transaction data');
         }
 
-        requestData.value = response.request;
+        requestData.value = response.transaction;
 
         // Calculate fee
         estimatedFee.value = await estimateFee(
-          requestData.value.payload.fromAddress || requestData.value.payload.from,
-          requestData.value.payload.amount,
-          requestData.value.payload.currency || 'VRSCTEST'
+          requestData.value.fromAddress,
+          requestData.value.amount,
+          requestData.value.currency
         );
 
-        // Load current balance
+        // Get current balance
         const balanceResponse = await browser.runtime.sendMessage({
-          type: 'GET_BALANCE',
+          type: 'VERUS_GET_BALANCE_REQUEST',
           payload: {
-            address: requestData.value.payload.fromAddress || requestData.value.payload.from
-          },
-          currency: requestData.value.payload.currency || 'VRSCTEST'
+            address: requestData.value.fromAddress,
+            currency: requestData.value.currency
+          }
         });
 
-        if (balanceResponse.error) {
-          throw new Error(balanceResponse.error);
-        }
-
-        currentBalance.value = balanceResponse.balance;
-
-        // Load known addresses
-        const addressesResponse = await browser.runtime.sendMessage({
-          type: 'GET_KNOWN_ADDRESSES'
-        });
-
-        if (addressesResponse.addresses) {
-          knownAddresses.value = new Set(addressesResponse.addresses);
-        }
-
-        // Load known origins
-        const originsResponse = await browser.runtime.sendMessage({
-          type: 'GET_CONNECTED_SITES'
-        });
-
-        if (originsResponse.sites) {
-          knownOrigins.value = new Set(originsResponse.sites);
+        if (balanceResponse.success && balanceResponse.balance) {
+          currentBalance.value = balanceResponse.balance;
         }
 
         loading.value = false;
-      } catch (err) {
-        console.error('Failed to load transaction data:', err);
-        error.value = err.message;
+      } catch (error) {
+        console.error('Failed to load transaction data:', error);
         loading.value = false;
+        error.value = error.message || 'Failed to load transaction data';
       }
     };
 
