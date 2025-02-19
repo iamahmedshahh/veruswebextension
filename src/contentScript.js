@@ -102,6 +102,21 @@ window.addEventListener('message', async (event) => {
                     error: feeResponse.error
                 }, '*');
                 break;
+
+            case 'VERUS_GET_CURRENCIES_REQUEST':
+                console.log('[Verus] Sending get currencies request to background');
+                const currenciesResponse = await chrome.runtime.sendMessage({
+                    type: 'VERUS_GET_CURRENCIES_REQUEST',
+                    origin: window.location.origin
+                });
+                console.log('[Verus] Got currencies response:', currenciesResponse);
+
+                window.postMessage({
+                    type: 'VERUS_GET_CURRENCIES_RESPONSE',
+                    currencies: currenciesResponse?.currencies || [],
+                    error: currenciesResponse?.error
+                }, '*');
+                break;
         }
     } catch (error) {
         console.error('[Verus] Content script error:', error);
@@ -110,7 +125,8 @@ window.addEventListener('message', async (event) => {
             'VERUS_CONNECT_REQUEST': 'CONNECT_REJECTED',
             'VERUS_GET_BALANCE_REQUEST': 'VERUS_GET_BALANCE_RESPONSE',
             'VERUS_SEND_TRANSACTION_REQUEST': 'VERUS_TRANSACTION_REJECTED',
-            'VERUS_ESTIMATE_FEE_REQUEST': 'VERUS_ESTIMATE_FEE_RESPONSE'
+            'VERUS_ESTIMATE_FEE_REQUEST': 'VERUS_ESTIMATE_FEE_RESPONSE',
+            'VERUS_GET_CURRENCIES_REQUEST': 'VERUS_GET_CURRENCIES_RESPONSE'
         };
         
         window.postMessage({
@@ -131,7 +147,8 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         'VERUS_BALANCE_UPDATED',
         'VERUS_TRANSACTION_APPROVED',
         'VERUS_TRANSACTION_REJECTED',
-        'VERUS_ESTIMATE_FEE_RESPONSE'
+        'VERUS_ESTIMATE_FEE_RESPONSE',
+        'VERUS_GET_CURRENCIES_RESPONSE'
     ].includes(message.type)) {
         window.postMessage(message, '*');
     }

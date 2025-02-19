@@ -72,6 +72,23 @@ class VerusWalletIntegration {
     checkConnection() {
         return this.isConnected;
     }
+
+    /**
+     * Get list of supported currencies
+     * @returns {Promise<string[]>} Array of supported currency symbols
+     * @throws {Error} If extension is not installed
+     */
+    async getCurrencies() {
+        if (!this.isInstalled) {
+            throw new Error('Verus extension not installed');
+        }
+
+        try {
+            return await this.provider.getCurrencies();
+        } catch (error) {
+            throw error;
+        }
+    }
 }
 
 // Usage example:
@@ -320,6 +337,23 @@ export function useVerusWallet() {
         }
     };
 
+    /**
+     * Get list of supported currencies
+     * @returns {Promise<string[]>} Array of supported currency symbols
+     */
+    const getCurrencies = async () => {
+        if (!isConnected.value) {
+            throw new Error('Not connected');
+        }
+
+        try {
+            return await window.verus.getCurrencies();
+        } catch (err) {
+            error.value = err.message;
+            throw err;
+        }
+    };
+
     // Setup and cleanup
     onMounted(() => {
         window.addEventListener('message', handleMessage);
@@ -376,7 +410,9 @@ export function useVerusWallet() {
         // Methods
         connect,
         getBalance,
-        sendTransaction
+        sendTransaction,
+        getCurrencies,
+        validateAddress,
     };
 }
 
@@ -384,5 +420,6 @@ export {
     isVerusInstalled, 
     isVerusConnected, 
     getVerusAddress, 
-    useVerusWallet 
+    useVerusWallet,
+    VerusWalletIntegration 
 };

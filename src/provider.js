@@ -33,6 +33,9 @@ class VerusProvider {
             case 'VERUS_GET_BALANCE_RESPONSE':
                 this.handleBalanceResponse(event.data);
                 break;
+            case 'VERUS_GET_CURRENCIES_RESPONSE':
+                this.handleCurrenciesResponse(event.data);
+                break;
             case 'VERUS_TRANSACTION_APPROVED':
                 this.handleTransactionApproved(event.data);
                 break;
@@ -59,6 +62,14 @@ class VerusProvider {
             this.rejectRequest('getBalance', new Error(data.error));
         } else {
             this.resolveRequest('getBalance', data.balance);
+        }
+    }
+
+    handleCurrenciesResponse(data) {
+        if (data.error) {
+            this.rejectRequest('getCurrencies', new Error(data.error));
+        } else {
+            this.resolveRequest('getCurrencies', data.currencies);
         }
     }
 
@@ -138,6 +149,19 @@ class VerusProvider {
                     address: this.address,
                     currency: currency
                 }
+            }, '*');
+        });
+    }
+
+    /**
+     * Get list of supported currencies
+     * @returns {Promise<Array<string>>} Array of supported currency symbols
+     */
+    async getCurrencies() {
+        return new Promise((resolve, reject) => {
+            this.pendingRequests.set('getCurrencies', { resolve, reject });
+            window.postMessage({
+                type: 'VERUS_GET_CURRENCIES_REQUEST'
             }, '*');
         });
     }

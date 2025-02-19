@@ -105,6 +105,10 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
             handleTransactionRejection(message, sender, sendResponse);
             break;
             
+        case 'VERUS_GET_CURRENCIES_REQUEST':
+            handleVerusGetCurrenciesRequest(message, sender, sendResponse);
+            break;
+            
         default:
             console.log('[Verus Background] Unknown message type:', type);
             sendResponse({ error: 'Unknown message type' });
@@ -511,6 +515,37 @@ async function handleTransactionRejection(message, sender, sendResponse) {
     } catch (error) {
         console.error('[Verus Background] Transaction rejection error:', error);
         sendResponse({ success: false, error: error.message });
+    }
+}
+
+// Handle get currencies request
+async function handleVerusGetCurrenciesRequest(message, sender, sendResponse) {
+    try {
+        // Get both available and selected currencies from storage
+        const { selectedCurrencies, availableCurrencies } = await chrome.storage.local.get(['selectedCurrencies', 'availableCurrencies']);
+        const currentNetwork = (await chrome.storage.local.get(['currentNetwork'])).currentNetwork;
+        
+        let currencies;
+        
+        // If we have available currencies from RPC, use those
+        if (availableCurrencies && availableCurrencies.length > 0) {
+            currencies = availableCurrencies.map(c => c.currencyid || c.name);
+        }
+        // If we have selected currencies, use those
+        else if (selectedCurrencies && selectedCurrencies.length > 0) {
+            currencies = selectedCurrencies;
+        }
+        // Fallback to defaults based on network
+        else {
+            currencies = currentNetwork === 'MAINNET' 
+                ? ['VRSC', 'BTC', 'ETH']
+                : ['VRSCTEST'];
+        }
+        
+        sendResponse({ currencies });
+    } catch (error) {
+        console.error('[Verus Background] Get currencies error:', error);
+        sendResponse({ error: error.message });
     }
 }
 
