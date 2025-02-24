@@ -106,31 +106,54 @@ window.addEventListener('message', async (event) => {
             case 'VERUS_GET_CURRENCIES_REQUEST':
                 console.log('[Verus] Sending get currencies request to background');
                 const currenciesResponse = await chrome.runtime.sendMessage({
-                    type: 'VERUS_GET_CURRENCIES_REQUEST',
+                    type: 'GET_CURRENCIES',
                     origin: window.location.origin
                 });
                 console.log('[Verus] Got currencies response:', currenciesResponse);
 
                 window.postMessage({
                     type: 'VERUS_GET_CURRENCIES_RESPONSE',
-                    currencies: currenciesResponse?.currencies || [],
-                    error: currenciesResponse?.error
+                    currencies: currenciesResponse.currencies,
+                    error: currenciesResponse.error
+                }, '*');
+                break;
+
+            case 'VERUS_GET_CURRENCY_BALANCE_REQUEST':
+                console.log('[Verus] Sending currency balance request to background');
+                const currencyBalanceResponse = await chrome.runtime.sendMessage({
+                    type: 'GET_CURRENCY_BALANCE',
+                    payload,
+                    origin: window.location.origin
+                });
+                console.log('[Verus] Got currency balance response:', currencyBalanceResponse);
+
+                window.postMessage({
+                    type: 'VERUS_GET_CURRENCY_BALANCE_RESPONSE',
+                    balance: currencyBalanceResponse.balance,
+                    error: currencyBalanceResponse.error
+                }, '*');
+                break;
+
+            case 'VERUS_SELECT_CURRENCY_REQUEST':
+                console.log('[Verus] Sending select currency request to background');
+                const selectCurrencyResponse = await chrome.runtime.sendMessage({
+                    type: 'SELECT_CURRENCY',
+                    payload,
+                    origin: window.location.origin
+                });
+                console.log('[Verus] Got select currency response:', selectCurrencyResponse);
+
+                window.postMessage({
+                    type: 'VERUS_SELECT_CURRENCY_RESPONSE',
+                    success: selectCurrencyResponse.success,
+                    error: selectCurrencyResponse.error
                 }, '*');
                 break;
         }
     } catch (error) {
-        console.error('[Verus] Content script error:', error);
-        // Send appropriate error response based on request type
-        const errorResponse = {
-            'VERUS_CONNECT_REQUEST': 'CONNECT_REJECTED',
-            'VERUS_GET_BALANCE_REQUEST': 'VERUS_GET_BALANCE_RESPONSE',
-            'VERUS_SEND_TRANSACTION_REQUEST': 'VERUS_TRANSACTION_REJECTED',
-            'VERUS_ESTIMATE_FEE_REQUEST': 'VERUS_ESTIMATE_FEE_RESPONSE',
-            'VERUS_GET_CURRENCIES_REQUEST': 'VERUS_GET_CURRENCIES_RESPONSE'
-        };
-        
+        console.error('[Verus] Error handling message:', error);
         window.postMessage({
-            type: errorResponse[type] || 'VERUS_ERROR',
+            type: `${type}_ERROR`,
             error: error.message
         }, '*');
     }

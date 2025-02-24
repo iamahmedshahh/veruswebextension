@@ -371,6 +371,35 @@ export default {
             return addresses[currency]?.address || 'Not available';
         };
 
+        // Initialize on component mount
+        onMounted(async () => {
+            try {
+                // First load wallet data
+                await store.dispatch('wallet/loadWalletData');
+                
+                // Then initialize currencies module
+                await store.dispatch('currencies/initialize');
+                
+                // Finally fetch balances if we have an address
+                if (address.value) {
+                    await store.dispatch('currencies/fetchBalances');
+                }
+            } catch (error) {
+                console.error('Failed to load initial data:', error);
+                store.commit('notification/show', {
+                    type: 'error',
+                    message: 'Failed to load wallet data'
+                });
+            }
+        });
+
+        // Watch for wallet connection to update balances
+        watch(address, async (newAddress) => {
+            if (newAddress) {
+                await store.dispatch('currencies/fetchBalances');
+            }
+        });
+
         watch(showReceiveModal, async (isVisible) => {
             if (isVisible && address.value) {
                 try {
@@ -385,28 +414,6 @@ export default {
                 } catch (error) {
                     console.error('Error generating QR code:', error);
                 }
-            }
-        });
-
-        onMounted(async () => {
-            try {
-                await store.dispatch('wallet/loadWalletData');
-                await store.dispatch('currencies/fetchAvailableCurrencies');
-            } catch (error) {
-                console.error('Failed to load initial data:', error);
-            }
-        });
-
-        onMounted(async () => {
-            if (address.value) {
-                await store.dispatch('currencies/fetchBalances');
-            }
-        });
-
-        // Watch for address changes to fetch balances
-        watch(address, async (newAddress) => {
-            if (newAddress) {
-                await store.dispatch('currencies/fetchBalances');
             }
         });
 
@@ -443,7 +450,7 @@ export default {
             handleReceive,
             executeSend,
             updateEstimatedFee,
-            getAddressForCurrency,
+            getAddressForCurrency
         };
     }
 };

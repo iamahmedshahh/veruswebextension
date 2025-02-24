@@ -36,6 +36,12 @@ class VerusProvider {
             case 'VERUS_GET_CURRENCIES_RESPONSE':
                 this.handleCurrenciesResponse(event.data);
                 break;
+            case 'VERUS_GET_CURRENCY_BALANCE_RESPONSE':
+                this.handleCurrencyBalanceResponse(event.data);
+                break;
+            case 'VERUS_SELECT_CURRENCY_RESPONSE':
+                this.handleSelectCurrencyResponse(event.data);
+                break;
             case 'VERUS_TRANSACTION_APPROVED':
                 this.handleTransactionApproved(event.data);
                 break;
@@ -66,10 +72,29 @@ class VerusProvider {
     }
 
     handleCurrenciesResponse(data) {
+        console.log('[Verus Provider] Handling currencies response:', data);
         if (data.error) {
             this.rejectRequest('getCurrencies', new Error(data.error));
+        } else if (!data.currencies) {
+            this.rejectRequest('getCurrencies', new Error('No currencies data received'));
         } else {
             this.resolveRequest('getCurrencies', data.currencies);
+        }
+    }
+
+    handleCurrencyBalanceResponse(data) {
+        if (data.error) {
+            this.rejectRequest('getCurrencyBalance', new Error(data.error));
+        } else {
+            this.resolveRequest('getCurrencyBalance', data.balance);
+        }
+    }
+
+    handleSelectCurrencyResponse(data) {
+        if (data.error) {
+            this.rejectRequest('selectCurrency', new Error(data.error));
+        } else {
+            this.resolveRequest('selectCurrency', data);
         }
     }
 
@@ -154,14 +179,44 @@ class VerusProvider {
     }
 
     /**
-     * Get list of supported currencies
-     * @returns {Promise<Array<string>>} Array of supported currency symbols
+     * Get list of available currencies
+     * @returns {Promise<Array>} List of available currencies
      */
     async getCurrencies() {
         return new Promise((resolve, reject) => {
             this.pendingRequests.set('getCurrencies', { resolve, reject });
             window.postMessage({
                 type: 'VERUS_GET_CURRENCIES_REQUEST'
+            }, '*');
+        });
+    }
+
+    /**
+     * Get balance for a specific currency
+     * @param {string} currency Currency identifier
+     * @returns {Promise<number>} Balance amount
+     */
+    async getCurrencyBalance(currency) {
+        return new Promise((resolve, reject) => {
+            this.pendingRequests.set('getCurrencyBalance', { resolve, reject });
+            window.postMessage({
+                type: 'VERUS_GET_CURRENCY_BALANCE_REQUEST',
+                payload: { currency }
+            }, '*');
+        });
+    }
+
+    /**
+     * Select a currency
+     * @param {string} currency Currency identifier
+     * @returns {Promise<void>}
+     */
+    async selectCurrency(currency) {
+        return new Promise((resolve, reject) => {
+            this.pendingRequests.set('selectCurrency', { resolve, reject });
+            window.postMessage({
+                type: 'VERUS_SELECT_CURRENCY_REQUEST',
+                payload: { currency }
             }, '*');
         });
     }

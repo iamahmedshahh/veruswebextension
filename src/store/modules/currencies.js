@@ -5,12 +5,39 @@ const MAX_CURRENCIES = 7;
 const MAINNET_DEFAULT_CURRENCIES = ['VRSC', 'BTC', 'ETH'];
 const TESTNET_DEFAULT_CURRENCIES = ['VRSCTEST'];
 
+// Helper function to save to both storages
+const saveToStorages = async (key, value) => {
+    // Save to chrome.storage
+    await chrome.storage.local.set({ [key]: value });
+    // Save to localStorage
+    localStorage.setItem(key, JSON.stringify(value));
+};
+
+// Helper function to get from storages
+const getFromStorages = async (key) => {
+    try {
+        // Try chrome.storage first
+        const chromeData = await chrome.storage.local.get([key]);
+        if (chromeData[key]) {
+            return chromeData[key];
+        }
+        
+        // Fallback to localStorage
+        const localData = localStorage.getItem(key);
+        return localData ? JSON.parse(localData) : null;
+    } catch (error) {
+        console.error('Error getting from storages:', error);
+        return null;
+    }
+};
+
 export default {
     namespaced: true,
     
     state: {
         availableCurrencies: [],
         selectedCurrencies: [],
+        activeCurrencies: [], 
         balances: {},
         currencyDefinitions: {},
         loading: false,
@@ -34,14 +61,11 @@ export default {
         },
 
         SET_SELECTED_CURRENCIES(state, currencies) {
-            // Get default currencies based on network
-            const defaultCurrencies = this.state.network.currentNetwork === 'MAINNET' 
-                ? MAINNET_DEFAULT_CURRENCIES 
-                : TESTNET_DEFAULT_CURRENCIES;
-            
-            // Ensure default currencies are always included and at the start of the array
-            const uniqueCurrencies = [...new Set([...defaultCurrencies, ...currencies])];
-            state.selectedCurrencies = uniqueCurrencies;
+            state.selectedCurrencies = currencies;
+        },
+
+        SET_ACTIVE_CURRENCIES(state, currencies) {
+            state.activeCurrencies = currencies;
         },
 
         SET_BALANCES(state, balances) {
@@ -83,28 +107,45 @@ export default {
 
     actions: {
         async initialize({ dispatch, commit, rootState }) {
-            // Wait for network to be initialized
-            if (!rootState.network.initialized) {
-                await dispatch('network/initialize', null, { root: true });
-            }
+            console.log('Initializing currencies module...');
             
-            await dispatch('loadPersistedState');
-            await dispatch('fetchAvailableCurrencies');
-            await dispatch('fetchBalances');
+            try {
+                // Load persisted state
+                await dispatch('loadPersistedState');
+                
+                // Fetch available currencies
+                await dispatch('fetchAvailableCurrencies');
+                
+                // Load active currencies
+                const activeCurrencies = await getFromStorages('activeCurrencies');
+                if (activeCurrencies && activeCurrencies.length > 0) {
+                    commit('SET_ACTIVE_CURRENCIES', activeCurrencies);
+                    commit('SET_SELECTED_CURRENCIES', activeCurrencies);
+                } else {
+                    // Set defaults if no active currencies
+                    const defaultCurrencies = rootState.network.currentNetwork === 'MAINNET' 
+                        ? MAINNET_DEFAULT_CURRENCIES 
+                        : TESTNET_DEFAULT_CURRENCIES;
+                    commit('SET_ACTIVE_CURRENCIES', defaultCurrencies);
+                    commit('SET_SELECTED_CURRENCIES', defaultCurrencies);
+                    await saveToStorages('activeCurrencies', defaultCurrencies);
+                }
+            } catch (error) {
+                console.error('Failed to initialize currencies module:', error);
+                commit('SET_ERROR', 'Failed to initialize currencies');
+            }
         },
 
         async loadPersistedState({ commit, rootState }) {
             try {
-                const { selectedCurrencies, balances } = await storage.get(['selectedCurrencies', 'balances']);
-                const defaultCurrencies = rootState.network.currentNetwork === 'MAINNET' 
-                    ? MAINNET_DEFAULT_CURRENCIES 
-                    : TESTNET_DEFAULT_CURRENCIES;
+                console.log('Loading persisted currencies state...');
+                const activeCurrencies = await getFromStorages('activeCurrencies');
+                const balances = await getFromStorages('balances');
                 
-                if (selectedCurrencies && selectedCurrencies.length > 0) {
-                    commit('SET_SELECTED_CURRENCIES', selectedCurrencies);
-                } else {
-                    // Set defaults if no persisted state
-                    commit('SET_SELECTED_CURRENCIES', defaultCurrencies);
+                if (activeCurrencies && activeCurrencies.length > 0) {
+                    console.log('Found persisted active currencies:', activeCurrencies);
+                    commit('SET_ACTIVE_CURRENCIES', activeCurrencies);
+                    commit('SET_SELECTED_CURRENCIES', activeCurrencies);
                 }
 
                 // Load persisted balances if available
@@ -123,15 +164,21 @@ export default {
 
         async persistSelectedCurrencies({ state }) {
             try {
-                await storage.set({ selectedCurrencies: state.selectedCurrencies });
+                console.log('Persisting selected currencies:', state.selectedCurrencies);
+                await saveToStorages('selectedCurrencies', state.selectedCurrencies);
             } catch (error) {
                 console.error('Failed to persist selected currencies:', error);
             }
         },
 
         async selectCurrency({ commit, dispatch, state }, currency) {
+            console.log('Selecting currency:', currency);
             const updatedCurrencies = [...state.selectedCurrencies, currency];
             commit('SET_SELECTED_CURRENCIES', updatedCurrencies);
+            commit('SET_ACTIVE_CURRENCIES', updatedCurrencies);
+            
+            // Save to both storages
+            await saveToStorages('activeCurrencies', updatedCurrencies);
             await dispatch('persistSelectedCurrencies');
             await dispatch('fetchBalances');
         },
@@ -147,8 +194,13 @@ export default {
                 return;
             }
 
+            console.log('Unselecting currency:', currency);
             const updatedCurrencies = state.selectedCurrencies.filter(c => c !== currency);
             commit('SET_SELECTED_CURRENCIES', updatedCurrencies);
+            commit('SET_ACTIVE_CURRENCIES', updatedCurrencies);
+            
+            // Save to both storages
+            await saveToStorages('activeCurrencies', updatedCurrencies);
             await dispatch('persistSelectedCurrencies');
         },
 
@@ -214,6 +266,7 @@ export default {
     getters: {
         getAvailableCurrencies: state => state.availableCurrencies,
         getSelectedCurrencies: state => state.selectedCurrencies,
+        getActiveCurrencies: state => state.activeCurrencies,
         getBalance: state => currency => state.balances[currency] || 0,
         canAddMoreCurrencies: state => state.selectedCurrencies.length < MAX_CURRENCIES,
         getCurrencyDefinition: state => currency => state.currencyDefinitions[currency]

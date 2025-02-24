@@ -6,18 +6,28 @@ import 'core-js/stable';
 import 'regenerator-runtime/runtime';
 import BigInteger from 'bigi';
 import { store } from '../store/index.js';
+import { NETWORKS } from '../config/networks';
+import bs58 from 'bs58'; // Add bs58 import
 
 // Polyfill Buffer for browser compatibility
 global.Buffer = Buffer;
 
 const { ECPair, Transaction, TransactionBuilder, networks } = pkg;
 
-// Network configuration for Verus Testnet
-const NETWORK = networks.verustest;
+// Get network configuration based on current network state
+function getNetworkConfig() {
+    const currentNetwork = store.getters['network/currentNetwork'];
+    return currentNetwork === 'TESTNET' ? networks.verustest : networks.verus;
+}
 
 // Constants
 const SATS_PER_COIN = 1e8;
-const DEFAULT_FEE = 20000; // 0.0002 VRSC
+const DEFAULT_FEE = 20000; // 0.0002 VRSC/VRSCTEST
+
+// Currency ID mapping
+const CURRENCY_IDS = {
+    'USD': 'iFawzbS99RqGs7J2TNxME1TmmayBGuRkA2'  // USD testnet currency ID
+};
 
 /**
  * Convert amount from VRSC to satoshis
@@ -100,14 +110,85 @@ async function resolveVerusId(verusId) {
 }
 
 /**
+ * Get currency value from UTXO
+ * @param {Object} utxo - UTXO object
+ * @param {string} currency - Currency symbol
+ * @returns {number} Currency value in satoshis
+ */
+function getCurrencyValueFromUtxo(utxo, currency) {
+    if (!currency || currency === store.getters['network/mainCoin']) {
+        return utxo.satoshis || 0;
+    }
+
+    const currencyId = CURRENCY_IDS[currency];
+    if (!currencyId) {
+        console.log(`No currency ID found for ${currency}`);
+        return 0;
+    }
+
+    if (utxo.currencyvalues && utxo.currencyvalues[currencyId]) {
+        return toSatoshis(utxo.currencyvalues[currencyId]);
+    }
+
+    return 0;
+}
+
+/**
+ * Create currency output script
+ * @param {string} address - Recipient address
+ * @param {string} currency - Currency symbol
+ * @returns {Buffer} Output script
+ */
+function createCurrencyOutputScript(address, currency) {
+    if (!currency || currency === store.getters['network/mainCoin']) {
+        return null; // Use default script for main coin
+    }
+
+    const currencyId = CURRENCY_IDS[currency];
+    if (!currencyId) {
+        throw new Error(`Unknown currency: ${currency}`);
+    }
+
+    try {
+        // Looking at the working input script format:
+        // 1a040300010114<address_hash>cc36040309010114<address_hash>1b01<currency_bytes>
+        const addressHash = bs58.decode(address).slice(1, -4); // Remove version and checksum
+        const currencyIdBytes = bs58.decode(currencyId.slice(1)); // Remove 'i' prefix
+
+        const script = Buffer.concat([
+            Buffer.from([0x1a, 0x04, 0x03, 0x00, 0x01, 0x01]), // Header
+            Buffer.from([0x14]), // Address length (20 bytes)
+            addressHash, // Address hash (20 bytes)
+            Buffer.from([0xcc, 0x36, 0x04, 0x03, 0x09, 0x01]), // Separator and flags
+            Buffer.from([0x01, 0x14]), // Length markers
+            addressHash, // Address hash again
+            Buffer.from([0x1b, 0x01]), // End marker and length
+            currencyIdBytes // Currency ID bytes
+        ]);
+
+        console.log('Created currency script:', {
+            currencyId,
+            addressHash: addressHash.toString('hex'),
+            currencyIdBytes: currencyIdBytes.toString('hex'),
+            fullScript: script.toString('hex')
+        });
+
+        return script;
+    } catch (error) {
+        console.error('Error in createCurrencyOutputScript:', error);
+        throw error;
+    }
+}
+
+/**
  * Send currency from one address to another
  * @param {string|Object} fromAddressOrParams - Either sender's address or params object
  * @param {string} [toAddress] - Recipient's address
  * @param {number} [amount] - Amount to send
  * @param {string} [privateKey] - Private key in WIF format
- * @param {string} [currency='VRSCTEST'] - Currency symbol
+ * @param {string} [currency] - Currency symbol (defaults to network's main coin)
  */
-async function sendCurrency(fromAddressOrParams, toAddress, amount, privateKey, currency = 'VRSCTEST') {
+async function sendCurrency(fromAddressOrParams, toAddress, amount, privateKey, currency) {
     // Handle both parameter styles
     let params;
     if (typeof fromAddressOrParams === 'object') {
@@ -122,14 +203,26 @@ async function sendCurrency(fromAddressOrParams, toAddress, amount, privateKey, 
         };
     }
 
+    // If currency is not specified, use the network's main coin
+    if (!params.currency) {
+        params.currency = store.getters['network/mainCoin'];
+    }
+
+    const mainCoin = store.getters['network/mainCoin'];
+    const isMainCoin = params.currency === mainCoin;
+
     console.log('Starting sendCurrency with params:', {
         fromAddress: params.fromAddress,
         toAddress: params.toAddress,
         amount: params.amount,
-        currency: params.currency
+        currency: params.currency,
+        isMainCoin
     });
 
     try {
+        // Get current network configuration
+        const NETWORK = getNetworkConfig();
+
         // Resolve addresses if they are Verus IDs
         let resolvedFromAddress = params.fromAddress;
         let resolvedToAddress = params.toAddress;
@@ -158,13 +251,7 @@ async function sendCurrency(fromAddressOrParams, toAddress, amount, privateKey, 
             throw new Error('No UTXOs available');
         }
 
-        // Filter UTXOs with balance
-        const relevantUtxos = utxos.filter(utxo => utxo.satoshis > 0);
-        console.log('Found UTXOs:', relevantUtxos.length);
-
-        if (relevantUtxos.length === 0) {
-            throw new Error(`No UTXOs available for ${params.currency}`);
-        }
+        console.log('Available UTXOs:', utxos);
 
         // Get current block height for locktime and expiry
         const currentHeight = await makeRPCCall('getblockcount', []);
@@ -173,46 +260,147 @@ async function sendCurrency(fromAddressOrParams, toAddress, amount, privateKey, 
         const txBuilder = new TransactionBuilder(NETWORK);
         txBuilder.setVersion(4);
         txBuilder.setVersionGroupId(0x892f2085);
-        txBuilder.setExpiryHeight(currentHeight + 20); // Set expiry 20 blocks ahead
-        txBuilder.setLockTime(currentHeight); // Set locktime to current height
+        txBuilder.setExpiryHeight(currentHeight + 20);
+        txBuilder.setLockTime(currentHeight);
 
-        // Add all inputs
-        let runningTotal = 0;
-        for (const utxo of relevantUtxos) {
-            txBuilder.addInput(utxo.txid, utxo.outputIndex);
-            runningTotal += utxo.satoshis;
+        // Calculate fee based on the main coin (VRSCTEST)
+        const fee = await estimateFee(resolvedFromAddress, params.amount, mainCoin);
+        const feeSats = toSatoshis(fee);
+
+        // Filter and collect UTXOs based on currency
+        const selectedUtxos = [];
+        let currencyTotal = 0;
+        let feeTotal = 0;
+
+        // Helper function to determine if a UTXO matches a currency
+        const isUtxoMatchingCurrency = (utxo, targetCurrency) => {
+            const value = getCurrencyValueFromUtxo(utxo, targetCurrency);
+            return value > 0;
+        };
+
+        // First, collect UTXOs for the currency being sent
+        const currencyUtxos = utxos.filter(utxo => isUtxoMatchingCurrency(utxo, params.currency));
+        
+        console.log(`Found ${currencyUtxos.length} UTXOs for ${params.currency}`);
+
+        for (const utxo of currencyUtxos) {
+            if (currencyTotal < amountSats) {
+                selectedUtxos.push(utxo);
+                txBuilder.addInput(utxo.txid, utxo.outputIndex);
+                currencyTotal += getCurrencyValueFromUtxo(utxo, params.currency);
+            }
         }
 
-        // Calculate fee
-        const fee = await estimateFee(resolvedFromAddress, params.amount, params.currency);
-
-        // Calculate total needed (amount + fee)
-        const totalNeeded = amountSats + toSatoshis(fee);
-
-        if (runningTotal < totalNeeded) {
-            throw new Error(`Insufficient funds. Need ${fromSatoshis(totalNeeded)} ${params.currency}, but only have ${fromSatoshis(runningTotal)} ${params.currency}`);
+        if (currencyTotal < amountSats) {
+            throw new Error(`Insufficient ${params.currency} funds. Need ${fromSatoshis(amountSats)} ${params.currency}, but only have ${fromSatoshis(currencyTotal)} ${params.currency}`);
         }
 
-        // Add recipient output with BigInteger conversion
-        txBuilder.addOutput(resolvedToAddress, amountSats);
+        // If this isn't the main coin, we need additional UTXOs for the fee
+        if (!isMainCoin) {
+            const feeUtxos = utxos.filter(utxo => isUtxoMatchingCurrency(utxo, mainCoin));
+            
+            console.log(`Found ${feeUtxos.length} UTXOs for fees (${mainCoin})`);
 
-        // Calculate and add change output
-        const changeAmount = runningTotal - amountSats - toSatoshis(fee);
-        if (changeAmount > 546) { // Dust threshold
-            txBuilder.addOutput(resolvedFromAddress, changeAmount);
-            console.log('Change output added:', changeAmount, params.currency);
+            for (const utxo of feeUtxos) {
+                if (feeTotal < feeSats) {
+                    selectedUtxos.push(utxo);
+                    txBuilder.addInput(utxo.txid, utxo.outputIndex);
+                    feeTotal += getCurrencyValueFromUtxo(utxo, mainCoin);
+                }
+            }
+
+            if (feeTotal < feeSats) {
+                throw new Error(`Insufficient ${mainCoin} for fee. Need ${fromSatoshis(feeSats)} ${mainCoin}, but only have ${fromSatoshis(feeTotal)} ${mainCoin}`);
+            }
+        } else {
+            // For main coin transactions, we need to ensure we have enough for both amount and fee
+            if (currencyTotal < (amountSats + feeSats)) {
+                throw new Error(`Insufficient ${mainCoin} funds. Need ${fromSatoshis(amountSats + feeSats)} ${mainCoin} (including fee), but only have ${fromSatoshis(currencyTotal)} ${mainCoin}`);
+            }
+            feeTotal = currencyTotal - amountSats;
         }
 
-        // Sign each input
+        // Add recipient output with appropriate script
+        if (!isMainCoin) {
+            try {
+                // For non-main coins, we need to create a currency-specific output
+                const currencyScript = createCurrencyOutputScript(resolvedToAddress, params.currency);
+                if (!currencyScript) {
+                    throw new Error(`Failed to create output script for ${params.currency}`);
+                }
+                console.log('Currency script created:', currencyScript.toString('hex'));
+                txBuilder.addOutput(currencyScript, amountSats);
+            } catch (error) {
+                console.error('Error creating currency script:', error);
+                throw error;
+            }
+        } else {
+            // For main coin, use standard output
+            txBuilder.addOutput(resolvedToAddress, amountSats);
+        }
+
+        // Add change outputs
+        if (!isMainCoin) {
+            // Add currency change output if needed
+            const currencyChange = currencyTotal - amountSats;
+            if (currencyChange > 546) { // Dust threshold
+                try {
+                    const changeScript = createCurrencyOutputScript(resolvedFromAddress, params.currency);
+                    if (changeScript) {
+                        console.log('Change script created:', changeScript.toString('hex'));
+                        txBuilder.addOutput(changeScript, currencyChange);
+                    }
+                } catch (error) {
+                    console.error('Error creating change script:', error);
+                    throw error;
+                }
+            }
+
+            // Add fee change output (always in main coin)
+            const feeChange = feeTotal - feeSats;
+            if (feeChange > 546) { // Dust threshold
+                txBuilder.addOutput(resolvedFromAddress, feeChange);
+            }
+        } else {
+            // For main coin, we only need one change output
+            const change = currencyTotal - amountSats - feeSats;
+            if (change > 546) { // Dust threshold
+                txBuilder.addOutput(resolvedFromAddress, change);
+            }
+        }
+
+        // Create key pair for signing
         const keyPair = ECPair.fromWIF(params.privateKey, NETWORK);
-        for (let i = 0; i < relevantUtxos.length; i++) {
-            txBuilder.sign(
-                i,
-                keyPair,
-                null,
-                null,
-                relevantUtxos[i].satoshis
-            );
+
+        // Sign each input with its corresponding amount and script
+        for (let i = 0; i < selectedUtxos.length; i++) {
+            const utxo = selectedUtxos[i];
+            const value = getCurrencyValueFromUtxo(utxo, isMainCoin ? mainCoin : params.currency);
+            
+            try {
+                // For non-main coins, we need to handle the script differently
+                if (!isMainCoin && utxo.script) {
+                    console.log('Signing with script:', utxo.script);
+                    txBuilder.sign(
+                        i,
+                        keyPair,
+                        Buffer.from(utxo.script, 'hex'),
+                        Transaction.SIGHASH_ALL,
+                        value
+                    );
+                } else {
+                    txBuilder.sign(
+                        i,
+                        keyPair,
+                        null,
+                        Transaction.SIGHASH_ALL,
+                        value
+                    );
+                }
+            } catch (error) {
+                console.error('Error signing input:', error, 'Input index:', i);
+                throw error;
+            }
         }
 
         // Build and broadcast
@@ -277,7 +465,7 @@ async function estimateFee(fromAddress, amount, currency = 'VRSCTEST') {
 
         // Sort UTXOs by amount
         const sortedUtxos = utxos
-            .filter(utxo => utxo.currency === currency)
+            .filter(utxo => getCurrencyValueFromUtxo(utxo, currency) > 0)
             .sort((a, b) => b.satoshis - a.satoshis);
 
         if (sortedUtxos.length === 0) {
@@ -291,7 +479,7 @@ async function estimateFee(fromAddress, amount, currency = 'VRSCTEST') {
         const targetSats = toSatoshis(amount);
 
         for (const utxo of sortedUtxos) {
-            totalSats += utxo.satoshis;
+            totalSats += getCurrencyValueFromUtxo(utxo, currency);
             inputCount++;
             if (totalSats >= targetSats) {
                 break;
