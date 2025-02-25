@@ -78,7 +78,10 @@ class VerusProvider {
         } else if (!data.currencies) {
             this.rejectRequest('getCurrencies', new Error('No currencies data received'));
         } else {
-            this.resolveRequest('getCurrencies', data.currencies);
+            // Only resolve if we haven't already
+            if (this.pendingRequests.has('getCurrencies')) {
+                this.resolveRequest('getCurrencies', data.currencies);
+            }
         }
     }
 
@@ -184,10 +187,16 @@ class VerusProvider {
      */
     async getCurrencies() {
         return new Promise((resolve, reject) => {
-            this.pendingRequests.set('getCurrencies', { resolve, reject });
-            window.postMessage({
-                type: 'VERUS_GET_CURRENCIES_REQUEST'
-            }, '*');
+            const requestId = 'getCurrencies';
+            
+            // If there's already a pending request, reject it
+            if (this.pendingRequests.has(requestId)) {
+                reject(new Error('Currency request already in progress'));
+                return;
+            }
+
+            this.pendingRequests.set(requestId, { resolve, reject });
+            window.postMessage({ type: 'VERUS_GET_CURRENCIES_REQUEST' }, '*');
         });
     }
 

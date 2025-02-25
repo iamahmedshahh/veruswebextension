@@ -105,17 +105,33 @@ window.addEventListener('message', async (event) => {
 
             case 'VERUS_GET_CURRENCIES_REQUEST':
                 console.log('[Verus] Sending get currencies request to background');
-                const currenciesResponse = await chrome.runtime.sendMessage({
-                    type: 'GET_CURRENCIES',
-                    origin: window.location.origin
-                });
-                console.log('[Verus] Got currencies response:', currenciesResponse);
+                try {
+                    const currenciesResponse = await chrome.runtime.sendMessage({
+                        type: 'GET_CURRENCIES',
+                        origin: window.location.origin
+                    });
+                    console.log('[Verus] Got currencies response:', currenciesResponse);
 
-                window.postMessage({
-                    type: 'VERUS_GET_CURRENCIES_RESPONSE',
-                    currencies: currenciesResponse.currencies,
-                    error: currenciesResponse.error
-                }, '*');
+                    // Only send response if successful
+                    if (currenciesResponse.success) {
+                        window.postMessage({
+                            type: 'VERUS_GET_CURRENCIES_RESPONSE',
+                            currencies: currenciesResponse.currencies,
+                            error: currenciesResponse.error
+                        }, '*');
+                    } else {
+                        window.postMessage({
+                            type: 'VERUS_GET_CURRENCIES_RESPONSE',
+                            error: currenciesResponse.error || 'Failed to get currencies'
+                        }, '*');
+                    }
+                } catch (error) {
+                    console.error('[Verus] Error getting currencies:', error);
+                    window.postMessage({
+                        type: 'VERUS_GET_CURRENCIES_RESPONSE',
+                        error: error.message || 'Failed to get currencies'
+                    }, '*');
+                }
                 break;
 
             case 'VERUS_GET_CURRENCY_BALANCE_REQUEST':

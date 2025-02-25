@@ -13,7 +13,8 @@ const state = {
 
 // Constants
 const DEFAULT_CURRENCY = 'VRSCTEST';
-const RPC_URL = 'https://api.verustest.net';  // Default Verus RPC port
+const RPC_URL = 'https://api.verustest.net';  // Default Verus testnet RPC port
+const TESTNET_ONLY = true; // Force testnet mode
 
 // Helper function for RPC calls
 async function makeRPCCall(method, params = []) {
@@ -49,7 +50,7 @@ async function makeRPCCall(method, params = []) {
 
 // Initialize state from storage
 async function initializeState() {
-    const stored = await chrome.storage.local.get(['wallet', 'connectedSites', 'selectedCurrency', 'currencies', 'network']);
+    const stored = await chrome.storage.local.get(['wallet', 'connectedSites', 'selectedCurrency', 'currencies']);
     if (stored.wallet) {
         state.wallet = stored.wallet;
     }
@@ -60,11 +61,17 @@ async function initializeState() {
         state.selectedCurrency = stored.selectedCurrency;
     }
     if (stored.currencies) {
-        state.currencies = new Map(Object.entries(stored.currencies));
+        // Filter to only include testnet currencies
+        const testnetCurrencies = {};
+        Object.entries(stored.currencies).forEach(([key, value]) => {
+            if (key.includes('TEST')) {
+                testnetCurrencies[key] = value;
+            }
+        });
+        state.currencies = new Map(Object.entries(testnetCurrencies));
     }
-    if (stored.network) {
-        state.network = stored.network;
-    }
+    // Force testnet mode
+    state.network = { isTestnet: true };
 }
 
 // Handle messages from content script
@@ -546,74 +553,86 @@ async function handleTransactionRejection(message, sender, sendResponse) {
     }
 }
 
+// Helper function to get network-specific storage key
+function getNetworkStorageKey(key) {
+    const network = state.network?.isTestnet ? 'testnet' : 'mainnet';
+    return `${key}_${network}`;
+}
+
 // Save to chrome storage
 async function saveToStorage(key, value) {
-    await chrome.storage.local.set({ [key]: value });
+    const networkKey = getNetworkStorageKey(key);
+    return chrome.storage.local.set({ [networkKey]: value });
 }
 
 // Get from chrome storage
 async function getFromStorage(key) {
-    try {
-        const data = await chrome.storage.local.get([key]);
-        return data[key] || null;
-    } catch (error) {
-        console.error('Error getting from storage:', error);
-        return null;
-    }
+    const networkKey = getNetworkStorageKey(key);
+    const result = await chrome.storage.local.get([networkKey]);
+    return result[networkKey];
 }
 
 async function handleGetCurrencies(message, sender, sendResponse) {
     try {
         console.log('[Verus Background] Getting currencies list');
         
-        // Get all stored data
-        const [
-            availableCurrencies, 
-            selectedCurrencies, 
-            balances
-        ] = await Promise.all([
-            getFromStorage('availableCurrencies'),
-            getFromStorage('selectedCurrencies'),
-            getFromStorage('balances')
-        ]);
+        // Get currencies from chrome storage
+        const storage = await chrome.storage.local.get(['availableCurrencies', 'selectedCurrencies', 'balances']);
+        const availableCurrencies = storage.availableCurrencies || [];
+        const selectedCurrencies = storage.selectedCurrencies ? 
+            (Array.isArray(storage.selectedCurrencies) ? storage.selectedCurrencies : Object.values(storage.selectedCurrencies)) 
+            : ['VRSCTEST'];
+        const balances = storage.balances || {};
 
         console.log('[Verus Background] Got stored data:', {
-            availableCurrencies,
-            selectedCurrencies,
-            balances
+            availableCurrencies: availableCurrencies.length,
+            selectedCurrencies: selectedCurrencies.length,
+            balances: Object.keys(balances).length
         });
 
-        // Get default currencies based on network
-        const defaultCurrencies = state.network?.isTestnet 
-            ? ['VRSCTEST']
-            : ['VRSC', 'BTC', 'ETH'];
+        // Create a map of all currencies (both available and selected)
+        const currencyMap = new Map();
+        
+        // Add available currencies
+        availableCurrencies.forEach(currency => {
+            if (!currencyMap.has(currency.currencyid)) {
+                currencyMap.set(currency.currencyid, {
+                    ...currency,
+                    selected: selectedCurrencies.includes(currency.currencyid)
+                });
+            }
+        });
 
-        // Use selected currencies if available, otherwise use defaults
-        const selectedIds = selectedCurrencies?.length > 0 ? selectedCurrencies : defaultCurrencies;
+        // Add selected currencies that might not be in available list
+        selectedCurrencies.forEach(currencyId => {
+            if (!currencyMap.has(currencyId)) {
+                currencyMap.set(currencyId, {
+                    currencyid: currencyId,
+                    name: currencyId,
+                    selected: true
+                });
+            } else {
+                // Update existing currency's selected state
+                const currency = currencyMap.get(currencyId);
+                currency.selected = true;
+                currencyMap.set(currencyId, currency);
+            }
+        });
 
-        // Use available currencies from storage or fallback to selected ones
-        const allCurrencies = availableCurrencies?.length > 0 
-            ? availableCurrencies 
-            : selectedIds.map(id => ({
-                currencyid: id,
-                name: id
-            }));
-
-        // Mark selected status and add balances
-        const currencies = allCurrencies.map(currency => {
-            const currencyId = currency.currencyid || currency.name;
-            const currencyBalances = balances?.[currencyId] || {};
+        // Convert map to array and add balances
+        const currenciesWithState = Array.from(currencyMap.values()).map(currency => {
+            const currencyId = currency.currencyid;
+            const currencyBalances = balances[currencyId] || {};
             const address = state.wallet?.address;
             
             return {
                 ...currency,
-                balance: address && selectedIds.includes(currencyId) ? (currencyBalances[address] || '0') : '0',
-                selected: selectedIds.includes(currencyId)
+                balance: address ? (currencyBalances[address] || '0') : '0'
             };
         });
 
-        console.log('[Verus Background] Returning currencies with balances:', currencies);
-        sendResponse({ success: true, currencies });
+        console.log('[Verus Background] Returning currencies:', currenciesWithState.length);
+        sendResponse({ success: true, currencies: currenciesWithState });
     } catch (error) {
         console.error('[Verus Background] Get currencies error:', error);
         sendResponse({ success: false, error: error.message });

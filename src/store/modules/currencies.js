@@ -254,6 +254,63 @@ export default {
             } finally {
                 commit('SET_LOADING', false);
             }
+        },
+
+        /**
+         * Get all available currencies and save to storage
+         */
+        async fetchAndSaveExtensionCurrencies({ commit }) {
+            try {
+                const result = await verusRPC.makeRPCCall('listcurrencies');
+                if (result) {
+                    const currencies = result.map(currency => ({
+                        currencyid: currency.currencyid,
+                        name: currency.name || currency.currencyid
+                    }));
+                    
+                    // Save to storage
+                    await saveToStorages('availableCurrencies', currencies, 'testnet');
+                    return currencies;
+                }
+                return [];
+            } catch (error) {
+                console.error('Error fetching extension currencies:', error);
+                throw error;
+            }
+        },
+
+        /**
+         * Get currencies from storage for extension
+         */
+        async getExtensionCurrencies({ commit }) {
+            try {
+                const currencies = await getFromStorages('availableCurrencies', 'testnet');
+                return currencies || [];
+            } catch (error) {
+                console.error('Error getting extension currencies:', error);
+                throw error;
+            }
+        },
+
+        /**
+         * Save currencies to chrome storage
+         */
+        async saveExtensionCurrencies({ commit }, currencies) {
+            try {
+                const processedCurrencies = currencies.map(currency => ({
+                    currencyid: currency.currencyid,
+                    name: currency.name || currency.currencyid
+                }));
+                
+                // Save to chrome storage
+                await chrome.storage.local.set({ 'availableCurrencies': processedCurrencies });
+                console.log('[Currencies] Saved to chrome storage:', processedCurrencies);
+                
+                return processedCurrencies;
+            } catch (error) {
+                console.error('Error saving extension currencies:', error);
+                throw error;
+            }
         }
     },
 
@@ -263,6 +320,7 @@ export default {
         getActiveCurrencies: state => state.activeCurrencies,
         getBalance: state => currency => state.balances[currency] || 0,
         canAddMoreCurrencies: state => state.selectedCurrencies.length < MAX_CURRENCIES,
-        getCurrencyDefinition: state => currency => state.currencyDefinitions[currency]
+        getCurrencyDefinition: state => currency => state.currencyDefinitions[currency],
+        getExtensionCurrencies: (state) => state.availableCurrencies
     }
 };

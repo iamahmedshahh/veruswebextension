@@ -173,6 +173,51 @@ async function getAllCurrencyBalances(address) {
 }
 
 /**
+ * Gets all currency info and saves to storage
+ * @returns {Promise<Array>} Array of currency info objects
+ */
+async function getAllCurrencyInfo() {
+    try {
+        // Make sure to pass '*' to get all currencies
+        const result = await makeRPCCall('listcurrencies', ['*']);
+        if (result) {
+            // Process all currencies, not just ones with balances
+            const allCurrencies = result.map(currency => ({
+                currencyid: currency.currencyid,
+                name: currency.name || currency.currencyid,
+            }));
+            
+            // Save to chrome storage
+            await chrome.storage.local.set({ 'availableCurrencies': allCurrencies });
+            console.log('[Verus RPC] Saved all currencies to chrome storage:', allCurrencies);
+            return allCurrencies;
+        }
+        return [];
+    } catch (error) {
+        console.error('Failed to get currency info:', error);
+        throw error;
+    }
+}
+
+/**
+ * Connect to wallet and initialize data
+ */
+async function connectWallet() {
+    try {
+        const result = await makeRPCCall('connect', []);
+        if (result?.success) {
+            // Get and save currencies after successful connection
+            await getAllCurrencyInfo();
+            return result;
+        }
+        throw new Error('Failed to connect');
+    } catch (error) {
+        console.error('Connect error:', error);
+        throw error;
+    }
+}
+
+/**
  * Get RPC connection instance
  * @returns {Promise<Object>} RPC connection object
  */
@@ -188,7 +233,9 @@ async function getRPCConnection() {
             getAllCurrencyBalances,
             getAddressUtxos,
             getAddressHistory,
-            getNetworkInfo
+            getNetworkInfo,
+            getAllCurrencyInfo,
+            connectWallet
         };
     } catch (error) {
         console.error('Failed to get RPC connection:', error);
@@ -205,5 +252,7 @@ export {
     getAddressHistory,
     getNetworkInfo,
     getAllCurrencyBalances,
-    getRPCConnection
+    getRPCConnection,
+    getAllCurrencyInfo,
+    connectWallet
 };

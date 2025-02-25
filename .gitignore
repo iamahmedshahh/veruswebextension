@@ -16,7 +16,6 @@ dist-ssr
 *.pem
 *.zip
 verusweb3
-vExchange
 
 # Editor directories and files
 .vscode/*
