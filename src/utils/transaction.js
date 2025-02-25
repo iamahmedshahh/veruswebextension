@@ -153,7 +153,14 @@ function createCurrencyOutputScript(address, currency) {
         // Looking at the working input script format:
         // 1a040300010114<address_hash>cc36040309010114<address_hash>1b01<currency_bytes>
         const addressHash = bs58.decode(address).slice(1, -4); // Remove version and checksum
+        
+        // Convert currency ID to bytes and create a checksum
         const currencyIdBytes = bs58.decode(currencyId.slice(1)); // Remove 'i' prefix
+        const currencyChecksum = Buffer.alloc(4);
+        for (let i = 0; i < 4; i++) {
+            currencyChecksum[i] = currencyIdBytes[currencyIdBytes.length - 4 + i];
+        }
+        const currencyHashBytes = currencyIdBytes.slice(0, -4); // Remove checksum
 
         const script = Buffer.concat([
             Buffer.from([0x1a, 0x04, 0x03, 0x00, 0x01, 0x01]), // Header
@@ -163,13 +170,14 @@ function createCurrencyOutputScript(address, currency) {
             Buffer.from([0x01, 0x14]), // Length markers
             addressHash, // Address hash again
             Buffer.from([0x1b, 0x01]), // End marker and length
-            currencyIdBytes // Currency ID bytes
+            currencyHashBytes // Currency hash bytes (without checksum)
         ]);
 
         console.log('Created currency script:', {
             currencyId,
             addressHash: addressHash.toString('hex'),
-            currencyIdBytes: currencyIdBytes.toString('hex'),
+            currencyHashBytes: currencyHashBytes.toString('hex'),
+            currencyChecksum: currencyChecksum.toString('hex'),
             fullScript: script.toString('hex')
         });
 
