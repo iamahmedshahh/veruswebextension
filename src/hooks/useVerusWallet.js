@@ -338,8 +338,8 @@ export function useVerusWallet() {
     };
 
     /**
-     * Get list of supported currencies
-     * @returns {Promise<string[]>} Array of supported currency symbols
+     * Get list of available currencies
+     * @returns {Promise<Array>} List of available currencies
      */
     const getCurrencies = async () => {
         if (!isConnected.value) {
@@ -347,10 +347,85 @@ export function useVerusWallet() {
         }
 
         try {
-            return await window.verus.getCurrencies();
+            console.log('[useVerusWallet] Getting currency list...');
+            const currencies = await window.verus.getCurrencies();
+            console.log('[useVerusWallet] Got currency list:', currencies);
+
+            // Log first currency for debugging
+            if (currencies.length > 0) {
+                console.log('[useVerusWallet] First currency sample:', currencies[0]);
+            }
+
+            // Validate currency data
+            if (!Array.isArray(currencies)) {
+                console.error('[useVerusWallet] Invalid currency response:', currencies);
+                throw new Error('Invalid currency data received');
+            }
+
+            // Filter out invalid currencies
+            const validCurrencies = currencies.filter(currency => {
+                const isValid = currency && 
+                    typeof currency === 'object' && 
+                    typeof currency.currencyid === 'string' && 
+                    typeof currency.name === 'string';
+                
+                if (!isValid) {
+                    console.warn('[useVerusWallet] Invalid currency object:', currency);
+                }
+                return isValid;
+            });
+
+            console.log('[useVerusWallet] Valid currencies count:', validCurrencies.length);
+
+            if (validCurrencies.length === 0) {
+                console.error('[useVerusWallet] No valid currencies found in response');
+                throw new Error('No valid currencies found');
+            }
+
+            return validCurrencies;
         } catch (err) {
+            console.error('[useVerusWallet] Error getting currencies:', err);
             error.value = err.message;
             throw err;
+        }
+    };
+
+    /**
+     * Preconvert/swap between currencies using a basket currency
+     * @param {Object} params - Conversion parameters
+     * @param {string} params.fromCurrency - Source currency (e.g., VRSCTEST)
+     * @param {string} params.toCurrency - Destination currency (e.g., SAILING)
+     * @param {string|number} params.amount - Amount to convert
+     * @param {string} [params.via='SPORTS'] - Basket currency to route through
+     * @param {string} [params.memo] - Optional memo/note
+     * @returns {Promise<string>} Transaction ID
+     */
+    const preconvertCurrency = async (params) => {
+        if (!isConnected.value) {
+            throw new Error('Wallet not connected');
+        }
+
+        try {
+            // Get conversion rate first
+            const rate = await getConversionRate(params.fromCurrency, params.toCurrency);
+            console.log('Conversion rate:', rate);
+
+            // Execute preconvert through the provider
+            const txid = await window.verus.preconvertCurrency({
+                fromCurrency: params.fromCurrency,
+                toCurrency: params.toCurrency,
+                amount: params.amount,
+                via: params.via || 'SPORTS', // Default to SPORTS basket
+                memo: params.memo
+            });
+
+            // Refresh balances after successful conversion
+            await refreshBalances();
+
+            return txid;
+        } catch (error) {
+            console.error('Error in preconvertCurrency:', error);
+            throw error;
         }
     };
 
@@ -413,6 +488,7 @@ export function useVerusWallet() {
         sendTransaction,
         getCurrencies,
         validateAddress,
+        preconvertCurrency,
     };
 }
 

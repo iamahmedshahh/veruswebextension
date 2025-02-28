@@ -31,13 +31,14 @@ class VerusProvider {
                 this.handleConnectRejected(event.data);
                 break;
             case 'VERUS_GET_BALANCE_RESPONSE':
+            case 'VERUS_GET_CURRENCY_BALANCE_RESPONSE':
                 this.handleBalanceResponse(event.data);
+                break;
+            case 'VERUS_GET_ALL_BALANCES_RESPONSE':
+                this.handleAllBalancesResponse(event.data);
                 break;
             case 'VERUS_GET_CURRENCIES_RESPONSE':
                 this.handleCurrenciesResponse(event.data);
-                break;
-            case 'VERUS_GET_CURRENCY_BALANCE_RESPONSE':
-                this.handleCurrencyBalanceResponse(event.data);
                 break;
             case 'VERUS_SELECT_CURRENCY_RESPONSE':
                 this.handleSelectCurrencyResponse(event.data);
@@ -47,6 +48,9 @@ class VerusProvider {
                 break;
             case 'VERUS_TRANSACTION_REJECTED':
                 this.handleTransactionRejected(event.data);
+                break;
+            case 'VERUS_PRECONVERT_RESPONSE':
+                this.handlePreconvertResponse(event.data);
                 break;
         }
     }
@@ -64,25 +68,58 @@ class VerusProvider {
     }
 
     handleBalanceResponse(data) {
-        if (data.error) {
-            this.rejectRequest('getBalance', new Error(data.error));
+        if (!data.success || data.error) {
+            this.rejectRequest('getBalance', new Error(data.error || 'Failed to get balance'));
         } else {
             this.resolveRequest('getBalance', data.balance);
         }
     }
 
+    handleAllBalancesResponse(data) {
+        if (!data.success || data.error) {
+            this.rejectRequest('getAllBalances', new Error(data.error || 'Failed to get balances'));
+        } else {
+            this.resolveRequest('getAllBalances', data.balances);
+        }
+    }
+
     handleCurrenciesResponse(data) {
         console.log('[Verus Provider] Handling currencies response:', data);
-        if (data.error) {
-            this.rejectRequest('getCurrencies', new Error(data.error));
-        } else if (!data.currencies) {
-            this.rejectRequest('getCurrencies', new Error('No currencies data received'));
-        } else {
-            // Only resolve if we haven't already
-            if (this.pendingRequests.has('getCurrencies')) {
-                this.resolveRequest('getCurrencies', data.currencies);
-            }
+        if (!data.success || data.error) {
+            this.rejectRequest('getCurrencies', new Error(data.error || 'Failed to get currencies'));
+            return;
         }
+        
+        if (!data.currencies || !Array.isArray(data.currencies)) {
+            console.error('[Verus Provider] Invalid currencies data:', data);
+            this.rejectRequest('getCurrencies', new Error('Invalid currency data received'));
+            return;
+        }
+
+        // Log first currency for debugging
+        if (data.currencies.length > 0) {
+            console.log('[Verus Provider] First currency sample:', data.currencies[0]);
+        }
+
+        // Validate each currency object
+        const validCurrencies = data.currencies.filter(currency => {
+            const isValid = currency && 
+                typeof currency === 'object' && 
+                typeof currency.currencyid === 'string' && 
+                typeof currency.name === 'string';
+            
+            if (!isValid) {
+                console.warn('[Verus Provider] Invalid currency object:', currency);
+            }
+            return isValid;
+        });
+
+        if (validCurrencies.length === 0) {
+            this.rejectRequest('getCurrencies', new Error('No valid currencies found'));
+            return;
+        }
+
+        this.resolveRequest('getCurrencies', validCurrencies);
     }
 
     handleCurrencyBalanceResponse(data) {
@@ -109,19 +146,27 @@ class VerusProvider {
         this.rejectRequest('sendTransaction', new Error(data.error || 'Transaction rejected'));
     }
 
-    resolveRequest(type, result) {
-        const request = this.pendingRequests.get(type);
-        if (request) {
-            request.resolve(result);
-            this.pendingRequests.delete(type);
+    handlePreconvertResponse(data) {
+        if (data.error) {
+            this.rejectRequest('preconvertCurrency', new Error(data.error));
+        } else {
+            this.resolveRequest('preconvertCurrency', data.txid);
         }
     }
 
-    rejectRequest(type, error) {
-        const request = this.pendingRequests.get(type);
+    resolveRequest(requestId, result) {
+        const request = this.pendingRequests.get(requestId);
+        if (request) {
+            request.resolve(result);
+            this.pendingRequests.delete(requestId);
+        }
+    }
+
+    rejectRequest(requestId, error) {
+        const request = this.pendingRequests.get(requestId);
         if (request) {
             request.reject(error);
-            this.pendingRequests.delete(type);
+            this.pendingRequests.delete(requestId);
         }
     }
 
@@ -134,10 +179,7 @@ class VerusProvider {
             return { address: this.address };
         }
 
-        return new Promise((resolve, reject) => {
-            this.pendingRequests.set('connect', { resolve, reject });
-            window.postMessage({ type: 'VERUS_CONNECT_REQUEST' }, '*');
-        });
+        return this.sendRequest('connect', 'VERUS_CONNECT_REQUEST');
     }
 
     /**
@@ -169,16 +211,20 @@ class VerusProvider {
             throw new Error('Not connected');
         }
 
-        return new Promise((resolve, reject) => {
-            this.pendingRequests.set('getBalance', { resolve, reject });
-            window.postMessage({
-                type: 'VERUS_GET_BALANCE_REQUEST',
-                payload: {
-                    address: this.address,
-                    currency: currency
-                }
-            }, '*');
-        });
+        return this.sendRequest('getBalance', 'VERUS_GET_BALANCE_REQUEST', { currency });
+    }
+
+    /**
+     * Get all balances for connected address
+     * @param {string[]} currencies - List of currencies to get balances for
+     * @returns {Promise<Object>} Balances in smallest unit
+     */
+    async getAllBalances(currencies) {
+        if (!this.isConnected) {
+            throw new Error('Not connected');
+        }
+
+        return this.sendRequest('getAllBalances', 'VERUS_GET_ALL_BALANCES_REQUEST', { currencies });
     }
 
     /**
@@ -186,18 +232,7 @@ class VerusProvider {
      * @returns {Promise<Array>} List of available currencies
      */
     async getCurrencies() {
-        return new Promise((resolve, reject) => {
-            const requestId = 'getCurrencies';
-            
-            // If there's already a pending request, reject it
-            if (this.pendingRequests.has(requestId)) {
-                reject(new Error('Currency request already in progress'));
-                return;
-            }
-
-            this.pendingRequests.set(requestId, { resolve, reject });
-            window.postMessage({ type: 'VERUS_GET_CURRENCIES_REQUEST' }, '*');
-        });
+        return this.sendRequest('getCurrencies', 'VERUS_GET_CURRENCIES_REQUEST');
     }
 
     /**
@@ -206,13 +241,7 @@ class VerusProvider {
      * @returns {Promise<number>} Balance amount
      */
     async getCurrencyBalance(currency) {
-        return new Promise((resolve, reject) => {
-            this.pendingRequests.set('getCurrencyBalance', { resolve, reject });
-            window.postMessage({
-                type: 'VERUS_GET_CURRENCY_BALANCE_REQUEST',
-                payload: { currency }
-            }, '*');
-        });
+        return this.sendRequest('getCurrencyBalance', 'VERUS_GET_CURRENCY_BALANCE_REQUEST', { currency });
     }
 
     /**
@@ -221,12 +250,41 @@ class VerusProvider {
      * @returns {Promise<void>}
      */
     async selectCurrency(currency) {
-        return new Promise((resolve, reject) => {
-            this.pendingRequests.set('selectCurrency', { resolve, reject });
-            window.postMessage({
-                type: 'VERUS_SELECT_CURRENCY_REQUEST',
-                payload: { currency }
-            }, '*');
+        return this.sendRequest('selectCurrency', 'VERUS_SELECT_CURRENCY_REQUEST', { currency });
+    }
+
+    /**
+     * Preconvert/swap between currencies using a basket currency
+     * @param {Object} params - Conversion parameters
+     * @param {string} params.fromCurrency - Source currency (e.g., VRSCTEST)
+     * @param {string} params.toCurrency - Destination currency (e.g., SAILING)
+     * @param {string|number} params.amount - Amount to convert
+     * @param {string} [params.via='SPORTS'] - Basket currency to route through
+     * @param {string} [params.memo] - Optional memo/note
+     * @returns {Promise<string>} Transaction ID
+     */
+    async preconvertCurrency(params) {
+        if (!this.isConnected) {
+            throw new Error('Not connected');
+        }
+
+        if (!params.fromCurrency || !params.toCurrency || !params.amount) {
+            throw new Error('Invalid parameters: fromCurrency, toCurrency and amount are required');
+        }
+
+        // Convert amount to number if string
+        const amount = typeof params.amount === 'string' ? parseFloat(params.amount) : params.amount;
+        if (isNaN(amount) || amount <= 0) {
+            throw new Error('Invalid amount');
+        }
+
+        return this.sendRequest('preconvertCurrency', 'VERUS_PRECONVERT_REQUEST', {
+            fromAddress: this.address,
+            fromCurrency: params.fromCurrency,
+            toCurrency: params.toCurrency,
+            amount: params.amount.toString(),
+            via: params.via || 'SPORTS', // Default to SPORTS basket
+            memo: params.memo
         });
     }
 
@@ -254,18 +312,12 @@ class VerusProvider {
             throw new Error('Invalid amount');
         }
 
-        return new Promise((resolve, reject) => {
-            this.pendingRequests.set('sendTransaction', { resolve, reject });
-            window.postMessage({
-                type: 'VERUS_SEND_TRANSACTION_REQUEST',
-                payload: {
-                    fromAddress: this.address,
-                    toAddress: params.to,
-                    amount: params.amount.toString(),
-                    currency: params.currency || DEFAULT_CURRENCY,
-                    memo: params.memo
-                }
-            }, '*');
+        return this.sendRequest('sendTransaction', 'VERUS_SEND_TRANSACTION_REQUEST', {
+            fromAddress: this.address,
+            toAddress: params.to,
+            amount: params.amount.toString(),
+            currency: params.currency || DEFAULT_CURRENCY,
+            memo: params.memo
         });
     }
 
@@ -301,15 +353,17 @@ class VerusProvider {
             throw new Error('Invalid amount');
         }
 
+        return this.sendRequest('estimateFee', 'VERUS_ESTIMATE_FEE_REQUEST', {
+            fromAddress: this.address,
+            amount: amount,
+            currency: params.currency || DEFAULT_CURRENCY
+        });
+    }
+
+    async sendRequest(requestId, type, payload = {}) {
         return new Promise((resolve, reject) => {
-            window.postMessage({
-                type: 'VERUS_ESTIMATE_FEE_REQUEST',
-                payload: {
-                    fromAddress: this.address,
-                    amount: amount,
-                    currency: params.currency || DEFAULT_CURRENCY
-                }
-            }, '*');
+            this.pendingRequests.set(requestId, { resolve, reject });
+            window.postMessage({ type, payload }, '*');
         });
     }
 }

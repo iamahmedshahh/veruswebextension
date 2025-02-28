@@ -56,18 +56,54 @@ window.addEventListener('message', async (event) => {
                 break;
 
             case 'VERUS_GET_BALANCE_REQUEST':
+            case 'VERUS_GET_CURRENCY_BALANCE_REQUEST':
                 console.log('[Verus] Sending balance request to background');
                 const balanceResponse = await chrome.runtime.sendMessage({
-                    type: 'GET_BALANCE',
+                    type: 'GET_CURRENCY_BALANCE',
                     payload,
                     origin: window.location.origin
                 });
                 console.log('[Verus] Got balance response:', balanceResponse);
 
                 window.postMessage({
-                    type: 'VERUS_GET_BALANCE_RESPONSE',
+                    type: type === 'VERUS_GET_BALANCE_REQUEST' ? 'VERUS_GET_BALANCE_RESPONSE' : 'VERUS_GET_CURRENCY_BALANCE_RESPONSE',
+                    success: balanceResponse.success,
                     balance: balanceResponse.balance,
                     error: balanceResponse.error
+                }, '*');
+                break;
+
+            case 'VERUS_GET_ALL_BALANCES_REQUEST':
+                console.log('[Verus] Sending all balances request to background');
+                const allBalancesResponse = await chrome.runtime.sendMessage({
+                    type: 'GET_ALL_BALANCES',
+                    payload,
+                    origin: window.location.origin
+                });
+                console.log('[Verus] Got all balances response:', allBalancesResponse);
+
+                window.postMessage({
+                    type: 'VERUS_GET_ALL_BALANCES_RESPONSE',
+                    success: allBalancesResponse.success,
+                    balances: allBalancesResponse.balances,
+                    error: allBalancesResponse.error
+                }, '*');
+                break;
+
+            case 'VERUS_GET_CURRENCIES_REQUEST':
+                console.log('[Verus] Sending currencies request to background');
+                const currenciesResponse = await chrome.runtime.sendMessage({
+                    type: 'GET_CURRENCIES',
+                    payload,
+                    origin: window.location.origin
+                });
+                console.log('[Verus] Got currencies response:', currenciesResponse);
+
+                window.postMessage({
+                    type: 'VERUS_GET_CURRENCIES_RESPONSE',
+                    success: currenciesResponse.success,
+                    currencies: currenciesResponse.currencies,
+                    error: currenciesResponse.error
                 }, '*');
                 break;
 
@@ -100,53 +136,6 @@ window.addEventListener('message', async (event) => {
                     type: 'VERUS_ESTIMATE_FEE_RESPONSE',
                     fee: feeResponse.fee,
                     error: feeResponse.error
-                }, '*');
-                break;
-
-            case 'VERUS_GET_CURRENCIES_REQUEST':
-                console.log('[Verus] Sending get currencies request to background');
-                try {
-                    const currenciesResponse = await chrome.runtime.sendMessage({
-                        type: 'GET_CURRENCIES',
-                        origin: window.location.origin
-                    });
-                    console.log('[Verus] Got currencies response:', currenciesResponse);
-
-                    // Only send response if successful
-                    if (currenciesResponse.success) {
-                        window.postMessage({
-                            type: 'VERUS_GET_CURRENCIES_RESPONSE',
-                            currencies: currenciesResponse.currencies,
-                            error: currenciesResponse.error
-                        }, '*');
-                    } else {
-                        window.postMessage({
-                            type: 'VERUS_GET_CURRENCIES_RESPONSE',
-                            error: currenciesResponse.error || 'Failed to get currencies'
-                        }, '*');
-                    }
-                } catch (error) {
-                    console.error('[Verus] Error getting currencies:', error);
-                    window.postMessage({
-                        type: 'VERUS_GET_CURRENCIES_RESPONSE',
-                        error: error.message || 'Failed to get currencies'
-                    }, '*');
-                }
-                break;
-
-            case 'VERUS_GET_CURRENCY_BALANCE_REQUEST':
-                console.log('[Verus] Sending currency balance request to background');
-                const currencyBalanceResponse = await chrome.runtime.sendMessage({
-                    type: 'GET_CURRENCY_BALANCE',
-                    payload,
-                    origin: window.location.origin
-                });
-                console.log('[Verus] Got currency balance response:', currencyBalanceResponse);
-
-                window.postMessage({
-                    type: 'VERUS_GET_CURRENCY_BALANCE_RESPONSE',
-                    balance: currencyBalanceResponse.balance,
-                    error: currencyBalanceResponse.error
                 }, '*');
                 break;
 

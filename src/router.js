@@ -6,6 +6,7 @@ import WalletDashboard from './components/WalletDashboard.vue';
 import CurrencyDetails from './components/CurrencyDetails.vue';
 import Login from './components/Login.vue';
 import TransactionApproval from './components/TransactionApproval.vue';
+import PreconvertApproval from './popup/PreconvertApproval.vue';
 import store from './store';
 
 const routes = [
@@ -47,6 +48,16 @@ const routes = [
     path: '/approve-transaction',
     name: 'approve-transaction',
     component: TransactionApproval,
+    props: route => ({ 
+      requestId: route.query.requestId,
+      origin: route.query.origin
+    }),
+    meta: { requiresAuth: true }
+  },
+  {
+    path: '/approve-preconvert',
+    name: 'approve-preconvert',
+    component: PreconvertApproval,
     props: route => ({ 
       requestId: route.query.requestId,
       origin: route.query.origin

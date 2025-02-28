@@ -8,7 +8,8 @@ const state = {
     wallet: null,
     selectedCurrency: 'VRSCTEST',
     currencies: new Map(),
-    network: null
+    network: null,
+    mainCurrency: 'VRSCTEST'
 };
 
 // Constants
@@ -50,28 +51,50 @@ async function makeRPCCall(method, params = []) {
 
 // Initialize state from storage
 async function initializeState() {
-    const stored = await chrome.storage.local.get(['wallet', 'connectedSites', 'selectedCurrency', 'currencies']);
-    if (stored.wallet) {
-        state.wallet = stored.wallet;
+    try {
+        const stored = await chrome.storage.local.get(['wallet', 'connectedSites', 'selectedCurrency']);
+        
+        if (stored.wallet) {
+            state.wallet = stored.wallet;
+        }
+        if (stored.connectedSites) {
+            state.connectedSites = new Set(stored.connectedSites);
+        }
+        if (stored.selectedCurrency) {
+            state.selectedCurrency = stored.selectedCurrency;
+        }
+
+        // Force testnet mode
+        state.network = { isTestnet: true };
+
+        // Fetch initial currencies list
+        const allCurrencies = await makeRPCCall('listcurrencies', []);
+        if (allCurrencies) {
+            const currenciesWithState = allCurrencies.map(currency => ({
+                currencyid: currency.currencyid || currency.name,
+                name: currency.name || currency.currencyid,
+                selected: currency.currencyid === 'VRSCTEST',
+                istoken: currency.istoken || false,
+                issystemcurrency: currency.issystemcurrency || false,
+                isconvertible: currency.isconvertible || false,
+                initialsupply: currency.initialsupply || '0',
+                supply: currency.supply || '0',
+                reserves: currency.reserves || [],
+                lastnotarization: currency.lastnotarization || null,
+                currencypath: currency.currencypath || [],
+                notarizationprotocol: currency.notarizationprotocol || null,
+                conversions: currency.conversions || [],
+                weights: currency.weights || [],
+                options: currency.options || {}
+            }));
+
+            await chrome.storage.local.set({
+                availableCurrencies: currenciesWithState
+            });
+        }
+    } catch (error) {
+        console.error('[Verus Background] Initialize state error:', error);
     }
-    if (stored.connectedSites) {
-        state.connectedSites = new Set(stored.connectedSites);
-    }
-    if (stored.selectedCurrency) {
-        state.selectedCurrency = stored.selectedCurrency;
-    }
-    if (stored.currencies) {
-        // Filter to only include testnet currencies
-        const testnetCurrencies = {};
-        Object.entries(stored.currencies).forEach(([key, value]) => {
-            if (key.includes('TEST')) {
-                testnetCurrencies[key] = value;
-            }
-        });
-        state.currencies = new Map(Object.entries(testnetCurrencies));
-    }
-    // Force testnet mode
-    state.network = { isTestnet: true };
 }
 
 // Handle messages from content script
@@ -84,9 +107,18 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
             handleConnectRequest(origin, sender, sendResponse);
             break;
             
+        case 'GET_CURRENCIES':
+            handleGetCurrencies(message, sender, sendResponse);
+            return true;
+            
         case 'GET_BALANCE':
-            handleGetBalance(message, sender, sendResponse);
-            break;
+        case 'GET_CURRENCY_BALANCE':
+            handleGetCurrencyBalanceRequest(message, sender, sendResponse);
+            return true;
+            
+        case 'GET_ALL_BALANCES':
+            handleGetAllBalancesRequest(message, sender, sendResponse);
+            return true;
             
         case 'APPROVE_CONNECTION':
             handleConnectionApproval(message.payload);
@@ -128,20 +160,28 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
             handleVerusGetCurrenciesRequest(message, sender, sendResponse);
             break;
             
-        case 'GET_CURRENCY_BALANCE':
-            handleGetCurrencyBalance(message, sender, sendResponse);
-            break;
-            
-        case 'SELECT_CURRENCY':
-            handleSelectCurrency(message, sender, sendResponse);
-            break;
-            
-        case 'UNSELECT_CURRENCY':
-            handleUnselectCurrency(message, sender, sendResponse);
-            break;
-            
         case 'GET_CURRENCIES':
             handleGetCurrencies(message, sender, sendResponse);
+            return true;
+            
+        case 'GET_ALL_BALANCES':
+            handleGetAllBalancesRequest(message, sender, sendResponse);
+            return true;
+            
+        case 'VERUS_PRECONVERT_REQUEST':
+            handleVerusPreconvertRequest(message, sender, sendResponse);
+            break;
+            
+        case 'GET_PRECONVERT_REQUEST':
+            handleGetPreconvertRequest(message, sender, sendResponse);
+            break;
+            
+        case 'APPROVE_PRECONVERT':
+            handlePreconvertApproval(message, sender, sendResponse);
+            break;
+            
+        case 'REJECT_PRECONVERT':
+            handlePreconvertRejection(message, sender, sendResponse);
             break;
             
         default:
@@ -213,65 +253,124 @@ async function handleConnectRequest(origin, sender, sendResponse) {
     }
 }
 
-async function handleGetBalance(request, sender, sendResponse) {
+async function handleGetCurrencyBalanceRequest(message, sender, sendResponse) {
     try {
-        const { address, currency = DEFAULT_CURRENCY } = request.payload;
-        console.log('[Verus Background] Getting balance for:', { address, currency });
-        
-        // Check if site is connected
-        if (!state.connectedSites.has(request.origin)) {
-            throw new Error('Site not connected. Please connect first.');
+        const { currency } = message.payload;
+        if (!currency) {
+            throw new Error('Currency not specified');
         }
 
-        // Get wallet and balances from storage
-        const { wallet, balances } = await chrome.storage.local.get(['wallet', 'balances']);
-        if (!wallet?.address) {
-            throw new Error('No wallet configured');
+        if (!state.wallet?.address) {
+            throw new Error('Wallet not connected');
         }
 
-        // Get balance from storage
-        const balance = balances?.[currency]?.[wallet.address] || '0';
-        console.log(`[Verus Background] Found balance: ${balance} for currency: ${currency}`);
-
-        // Send message to popup to refresh balances
-        chrome.runtime.sendMessage({
-            type: 'REFRESH_BALANCES',
-            payload: { address: wallet.address, currency: currency }
-        }).catch(error => {
-            // Ignore error if popup is not open
-            console.log('[Verus Background] Popup not available for balance refresh');
-        });
-
-        // Notify content script about the balance
-        if (sender?.tab?.id) {
-            try {
-                await chrome.tabs.sendMessage(sender.tab.id, {
-                    type: 'VERUS_BALANCE_UPDATED',
-                    currency: currency,
-                    balance: balance
-                });
-            } catch (error) {
-                console.error('[Verus Background] Failed to notify content script:', error);
-            }
-        }
-
-        sendResponse({ balance: balance.toString() });
+        const balance = await handleGetCurrencyBalance(currency);
+        console.log(`[Verus Background] Found balance: ${balance.balance} for currency: ${currency}`);
+        sendResponse({ success: true, balance: balance.balance.toString() });
     } catch (error) {
         console.error('[Verus Background] Get balance error:', error);
+        sendResponse({ success: false, error: error.message });
+    }
+}
+
+async function handleGetAllBalancesRequest(message, sender, sendResponse) {
+    try {
+        let currencies = message.payload?.currencies;
         
-        // Send error back through content script
-        if (sender?.tab?.id) {
-            try {
-                await chrome.tabs.sendMessage(sender.tab.id, {
-                    type: 'VERUS_BALANCE_UPDATED',
-                    error: error.message
-                });
-            } catch (err) {
-                console.error('[Verus Background] Failed to notify content script:', err);
-            }
+        // If no currencies provided, get from storage
+        if (!currencies) {
+            const storage = await chrome.storage.local.get(['availableCurrencies']);
+            currencies = Array.isArray(storage.availableCurrencies) 
+                ? storage.availableCurrencies.filter(c => c && typeof c === 'object' && typeof c.currencyid === 'string')
+                : [];
         }
+
+        if (currencies.length === 0) {
+            console.log('[Verus Background] No valid currencies found');
+            sendResponse({ success: true, balances: {} });
+            return true;
+        }
+
+        console.log('[Verus Background] Getting balances for currencies:', currencies);
+
+        // Get balances for all currencies
+        const balances = await handleGetAllBalances(currencies);
+
+        // Update balances in storage
+        await chrome.storage.local.set({ balances });
+
+        console.log('[Verus Background] Updated all balances:', balances);
+        sendResponse({ success: true, balances });
+        return true;
+    } catch (error) {
+        console.error('[Verus Background] Error getting all balances:', error);
+        sendResponse({ success: false, error: error.message });
+        return true;
+    }
+}
+
+async function handleGetCurrencyBalance(currencyId) {
+    try {
+        if (!state.wallet?.address) {
+            throw new Error('Wallet not connected');
+        }
+
+        // Get balance info for specific currency
+        const balanceResult = await makeRPCCall('getaddressbalance', [{
+            addresses: [state.wallet.address],
+            currencyid: currencyId
+        }]);
+
+        let totalBalance = 0;
+        if (balanceResult && typeof balanceResult.balance === 'number') {
+            totalBalance = balanceResult.balance / 100000000; // Convert from satoshis
+        }
+
+        console.log(`[Verus Background] Balance for ${currencyId}:`, totalBalance);
+        return { success: true, balance: totalBalance.toString() };
+    } catch (err) {
+        console.error('[Verus Background] Error getting currency balance:', err);
+        return { success: false, error: err.message };
+    }
+}
+
+async function handleGetAllBalances(currencies) {
+    try {
+        console.log('[Verus Background] Getting balances for currencies:', currencies);
+        if (!Array.isArray(currencies)) {
+            throw new Error('Currencies must be an array');
+        }
+
+        const balances = {};
         
-        sendResponse({ error: error.message });
+        // Get balance info for all currencies in parallel
+        const balanceResults = await Promise.all(
+            currencies.map(currency => 
+                makeRPCCall('getaddressbalance', [{
+                    addresses: [state.wallet.address],
+                    currencyid: currency.currencyid
+                }]).catch(err => {
+                    console.warn(`[Verus Background] Failed to get balance for ${currency.currencyid}:`, err);
+                    return null;
+                })
+            )
+        );
+
+        // Process balances
+        currencies.forEach((currency, index) => {
+            const balanceResult = balanceResults[index];
+            if (balanceResult && typeof balanceResult.balance === 'number') {
+                balances[currency.currencyid] = (balanceResult.balance / 100000000).toString();
+            } else {
+                balances[currency.currencyid] = '0';
+            }
+        });
+
+        console.log('[Verus Background] All balances:', balances);
+        return balances;
+    } catch (err) {
+        console.error('[Verus Background] Error getting all balances:', err);
+        throw err;
     }
 }
 
@@ -386,13 +485,16 @@ async function handleVerusGetBalanceRequest(message, sender, sendResponse) {
         console.log(`[Verus Background] Getting balance for ${address}, currency: ${currency}`);
         
         // Get balance from RPC
-        const result = await makeRPCCall('getaddressbalance', [{ addresses: [address] }]);
-        const confirmedBalance = result.balance || 0;
-        
-        console.log(`[Verus Background] Found balance: ${confirmedBalance} for currency: ${currency}`);
+        const result = await makeRPCCall('getaddressutxos', [{
+            addresses: [address],
+            currencynames: true
+        }]);
+        const balance = await handleGetCurrencyBalance(currency);
+
+        console.log(`[Verus Background] Found balance: ${balance.balance} for currency: ${currency}`);
 
         // Send response directly through sendResponse
-        sendResponse({ success: true, balance: confirmedBalance.toString() });
+        sendResponse({ success: true, balance: balance.balance.toString() });
     } catch (error) {
         console.error('[Verus Background] Get balance error:', error);
         sendResponse({ success: false, error: error.message });
@@ -488,27 +590,32 @@ async function handleTransactionApproval(message, sender, sendResponse) {
     try {
         const { requestId } = message.payload;
         console.log('[Verus Background] Handling transaction approval:', requestId);
+        
+        const request = state.pendingRequests.get(requestId);
+        if (!request) {
+            throw new Error('Transaction request not found');
+        }
 
         // Get the stored request data
         const data = await chrome.storage.local.get([`txRequest_${requestId}`]);
-        const request = data[`txRequest_${requestId}`];
-        console.log('[Verus Background] Found request data:', request);
+        const transaction = data[`txRequest_${requestId}`];
+        console.log('[Verus Background] Found request data:', transaction);
 
-        if (!request) {
+        if (!transaction) {
             throw new Error('Transaction request not found');
         }
 
         // Notify any waiting popups
         const popupResponses = await chrome.storage.local.get(['popupResponses']);
         const responses = popupResponses.popupResponses || {};
-        responses[request.popupId] = { approved: true };
+        responses[transaction.popupId] = { approved: true };
         await chrome.storage.local.set({ popupResponses: responses });
         console.log('[Verus Background] Set popup response:', responses);
 
         // Send the transaction using sendtoaddress RPC method
         const txid = await makeRPCCall('sendtoaddress', [
-            request.toAddress,
-            parseFloat(request.amount),
+            transaction.toAddress,
+            parseFloat(transaction.amount),
             "", // comment
             "", // comment_to
             false, // subtract fee from amount
@@ -516,7 +623,7 @@ async function handleTransactionApproval(message, sender, sendResponse) {
             1, // conf target
             "UNSET", // address type
             false, // avoid reuse
-            request.currency || DEFAULT_CURRENCY // currency
+            transaction.currency || DEFAULT_CURRENCY // currency
         ]);
         console.log('[Verus Background] Transaction sent:', txid);
 
@@ -574,91 +681,69 @@ async function getFromStorage(key) {
 
 async function handleGetCurrencies(message, sender, sendResponse) {
     try {
-        console.log('[Verus Background] Getting currencies list');
-        
-        // Get currencies from chrome storage
-        const storage = await chrome.storage.local.get(['availableCurrencies', 'selectedCurrencies', 'balances']);
-        const availableCurrencies = storage.availableCurrencies || [];
-        const selectedCurrencies = storage.selectedCurrencies ? 
-            (Array.isArray(storage.selectedCurrencies) ? storage.selectedCurrencies : Object.values(storage.selectedCurrencies)) 
-            : ['VRSCTEST'];
-        const balances = storage.balances || {};
-
-        console.log('[Verus Background] Got stored data:', {
-            availableCurrencies: availableCurrencies.length,
-            selectedCurrencies: selectedCurrencies.length,
-            balances: Object.keys(balances).length
-        });
-
-        // Create a map of all currencies (both available and selected)
-        const currencyMap = new Map();
-        
-        // Add available currencies
-        availableCurrencies.forEach(currency => {
-            if (!currencyMap.has(currency.currencyid)) {
-                currencyMap.set(currency.currencyid, {
-                    ...currency,
-                    selected: selectedCurrencies.includes(currency.currencyid)
-                });
-            }
-        });
-
-        // Add selected currencies that might not be in available list
-        selectedCurrencies.forEach(currencyId => {
-            if (!currencyMap.has(currencyId)) {
-                currencyMap.set(currencyId, {
-                    currencyid: currencyId,
-                    name: currencyId,
-                    selected: true
-                });
-            } else {
-                // Update existing currency's selected state
-                const currency = currencyMap.get(currencyId);
-                currency.selected = true;
-                currencyMap.set(currencyId, currency);
-            }
-        });
-
-        // Convert map to array and add balances
-        const currenciesWithState = Array.from(currencyMap.values()).map(currency => {
-            const currencyId = currency.currencyid;
-            const currencyBalances = balances[currencyId] || {};
-            const address = state.wallet?.address;
-            
-            return {
-                ...currency,
-                balance: address ? (currencyBalances[address] || '0') : '0'
-            };
-        });
-
-        console.log('[Verus Background] Returning currencies:', currenciesWithState.length);
-        sendResponse({ success: true, currencies: currenciesWithState });
-    } catch (error) {
-        console.error('[Verus Background] Get currencies error:', error);
-        sendResponse({ success: false, error: error.message });
-    }
-}
-
-async function handleGetCurrencyBalance(message, sender, sendResponse) {
-    try {
-        const { currency } = message.payload;
-        if (!currency) {
-            throw new Error('Currency not specified');
-        }
-
-        const { balances } = await chrome.storage.local.get(['balances']);
-        
+        // Get the wallet address
         const address = state.wallet?.address;
-        
         if (!address) {
             throw new Error('Wallet not connected');
         }
 
-        const balance = balances?.[currency]?.[address] || '0';
-        sendResponse({ success: true, balance });
+        console.log('[Verus Background] Getting currencies list');
+        
+        // Get currencies using RPC call
+        const currencies = await makeRPCCall('listcurrencies', []);
+        
+        if (!Array.isArray(currencies)) {
+            throw new Error('Invalid response from listcurrencies');
+        }
+
+        // Process and filter currencies
+        const processedCurrencies = currencies
+            .filter(currency => currency && currency.currencydefinition)
+            .map(currency => {
+                const def = currency.currencydefinition;
+                return {
+                    currencyid: def.currencyid,
+                    name: def.name || def.currencyid,
+                    fullyqualifiedname: def.fullyqualifiedname || def.name || def.currencyid,
+                    balance: '0', // Initial balance
+                    istoken: def.options === 40,
+                    issystemcurrency: def.systemid === def.currencyid,
+                    isconvertible: currency.bestcurrencystate?.currencies ? true : false,
+                    initialsupply: def.initialsupply || '0',
+                    supply: currency.bestcurrencystate?.supply || '0',
+                    currencydefinition: def
+                };
+            });
+
+        if (processedCurrencies.length === 0) {
+            throw new Error('No valid currencies found');
+        }
+
+        // Save to storage
+        await chrome.storage.local.set({ availableCurrencies: processedCurrencies });
+        
+        console.log('[Verus Background] Got currencies:', processedCurrencies);
+        
+        // Send response with currencies
+        sendResponse({
+            success: true,
+            currencies: processedCurrencies
+        });
+
+        // Start fetching balances in the background
+        handleGetAllBalances(processedCurrencies).then(balances => {
+            chrome.storage.local.set({ balances });
+            console.log('[Verus Background] Updated balances in background:', balances);
+        }).catch(err => {
+            console.error('[Verus Background] Error updating balances in background:', err);
+        });
+
     } catch (error) {
-        console.error('[Verus Background] Get balance error:', error);
-        sendResponse({ success: false, error: error.message });
+        console.error('[Verus Background] Error getting currencies:', error);
+        sendResponse({
+            success: false,
+            error: error.message
+        });
     }
 }
 
@@ -717,21 +802,20 @@ async function handleUnselectCurrency(message, sender, sendResponse) {
 
 // Create transaction approval popup
 async function createTransactionApprovalPopup(transaction) {
-    // Generate unique request ID
-    const requestId = Date.now().toString();
-    
-    // Store transaction data
-    await chrome.storage.local.set({
-        [`txRequest_${requestId}`]: {
-            ...transaction,
-            id: requestId,
-            timestamp: Date.now()
-        }
-    });
+    const popupURL = chrome.runtime.getURL(
+        transaction.type === 'preconvert' 
+            ? 'popup.html#/approve-preconvert'
+            : 'popup.html#/approve-transaction'
+    );
 
-    // Create popup with correct route
+    const requestId = Date.now().toString();
+    const queryParams = new URLSearchParams({
+        requestId,
+        origin: transaction.origin || ''
+    }).toString();
+
     const popup = await chrome.windows.create({
-        url: chrome.runtime.getURL(`popup.html#/approve-transaction?requestId=${requestId}`),
+        url: `${popupURL}?${queryParams}`,
         type: 'popup',
         width: 400,
         height: 600
@@ -780,6 +864,143 @@ async function sendMessageToContentScript(tabId, message) {
     } catch (error) {
         console.log('[Verus Background] Could not send message to content script:', error);
         // Don't throw - this is expected if content script isn't loaded
+    }
+}
+
+async function handleVerusPreconvertRequest(message, sender, sendResponse) {
+    try {
+        const { fromAddress, fromCurrency, toCurrency, amount, memo } = message.payload;
+        console.log('[Verus Background] Processing preconvert request:', { fromAddress, fromCurrency, toCurrency, amount });
+
+        // Basic validation
+        if (!fromAddress || !fromCurrency || !toCurrency || !amount) {
+            throw new Error('Invalid parameters provided');
+        }
+
+        // Create preconvert approval popup
+        const { id: popupId, requestId } = await createTransactionApprovalPopup({
+            fromAddress,
+            fromCurrency,
+            toCurrency,
+            amount,
+            memo,
+            type: 'preconvert',
+            origin: message.origin
+        });
+
+        // Store preconvert data
+        await chrome.storage.local.set({
+            [`preconvertRequest_${requestId}`]: {
+                fromAddress,
+                fromCurrency,
+                toCurrency,
+                amount,
+                memo,
+                popupId,
+                timestamp: Date.now()
+            }
+        });
+
+        // Return immediately with requestId
+        sendResponse({ success: true, requestId });
+    } catch (error) {
+        console.error('[Verus Background] Preconvert error:', error);
+        sendResponse({ success: false, error: error.message });
+    }
+}
+
+async function handleGetPreconvertRequest(message, sender, sendResponse) {
+    try {
+        const { requestId } = message;
+        console.log('[Verus Background] Getting preconvert request:', requestId);
+
+        // Get preconvert data from storage
+        const data = await chrome.storage.local.get([`preconvertRequest_${requestId}`]);
+        const transaction = data[`preconvertRequest_${requestId}`];
+
+        if (!transaction) {
+            throw new Error('Preconvert request not found');
+        }
+
+        sendResponse({ success: true, transaction });
+    } catch (error) {
+        console.error('[Verus Background] Get preconvert error:', error);
+        sendResponse({ success: false, error: error.message });
+    }
+}
+
+async function handlePreconvertApproval(message, sender, sendResponse) {
+    try {
+        const { requestId } = message.payload;
+        console.log('[Verus Background] Handling preconvert approval:', requestId);
+
+        // Get the stored request data
+        const data = await chrome.storage.local.get([`preconvertRequest_${requestId}`]);
+        const request = data[`preconvertRequest_${requestId}`];
+        console.log('[Verus Background] Found request data:', request);
+
+        if (!request) {
+            throw new Error('Preconvert request not found');
+        }
+
+        // Execute the preconvert with via and convertto parameters
+        const txid = await makeRPCCall('sendcurrency', [{
+            from: request.fromAddress,
+            amount: request.amount,
+            currency: request.fromCurrency,
+            via: request.via || 'SPORTS', // Use SPORTS as default basket
+            convertto: request.toCurrency,
+            memo: request.memo || ''
+        }]);
+
+        // Notify content script of success
+        const tabs = await chrome.tabs.query({ url: request.origin + '/*' });
+        for (const tab of tabs) {
+            await sendMessageToContentScript(tab.id, {
+                type: 'VERUS_PRECONVERT_APPROVED',
+                txid
+            });
+        }
+
+        // Cleanup stored request
+        await chrome.storage.local.remove(`preconvertRequest_${requestId}`);
+        
+        sendResponse({ success: true, txid });
+    } catch (error) {
+        console.error('[Verus Background] Preconvert approval error:', error);
+        sendResponse({ success: false, error: error.message });
+    }
+}
+
+async function handlePreconvertRejection(message, sender, sendResponse) {
+    try {
+        const { requestId } = message.payload;
+        console.log('[Verus Background] Handling preconvert rejection:', requestId);
+
+        // Get request data
+        const data = await chrome.storage.local.get([`preconvertRequest_${requestId}`]);
+        const request = data[`preconvertRequest_${requestId}`];
+
+        if (!request) {
+            throw new Error('Preconvert request not found');
+        }
+
+        // Notify content script of rejection
+        const tabs = await chrome.tabs.query({ url: request.origin + '/*' });
+        for (const tab of tabs) {
+            await sendMessageToContentScript(tab.id, {
+                type: 'VERUS_PRECONVERT_REJECTED',
+                error: 'User rejected preconvert request'
+            });
+        }
+
+        // Cleanup stored request
+        await chrome.storage.local.remove(`preconvertRequest_${requestId}`);
+        
+        sendResponse({ success: true });
+    } catch (error) {
+        console.error('[Verus Background] Preconvert rejection error:', error);
+        sendResponse({ success: false, error: error.message });
     }
 }
 
