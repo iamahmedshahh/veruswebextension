@@ -275,31 +275,8 @@ async function handleGetCurrencyBalanceRequest(message, sender, sendResponse) {
 
 async function handleGetAllBalancesRequest(message, sender, sendResponse) {
     try {
-        let currencies = message.payload?.currencies;
-        
-        // If no currencies provided, get from storage
-        if (!currencies) {
-            const storage = await chrome.storage.local.get(['availableCurrencies']);
-            currencies = Array.isArray(storage.availableCurrencies) 
-                ? storage.availableCurrencies.filter(c => c && typeof c === 'object' && typeof c.currencyid === 'string')
-                : [];
-        }
-
-        if (currencies.length === 0) {
-            console.log('[Verus Background] No valid currencies found');
-            sendResponse({ success: true, balances: {} });
-            return true;
-        }
-
-        console.log('[Verus Background] Getting balances for currencies:', currencies);
-
-        // Get balances for all currencies
-        const balances = await handleGetAllBalances(currencies);
-
-        // Update balances in storage
-        await chrome.storage.local.set({ balances });
-
-        console.log('[Verus Background] Updated all balances:', balances);
+        const balances = await handleGetAllBalances();
+        console.log('[Verus Background] Sending balances to frontend:', balances);
         sendResponse({ success: true, balances });
         return true;
     } catch (error) {
@@ -309,60 +286,44 @@ async function handleGetAllBalancesRequest(message, sender, sendResponse) {
     }
 }
 
-async function handleGetCurrencyBalance(currencyId) {
+async function handleGetAllBalances() {
     try {
-        if (!state.wallet?.address) {
-            throw new Error('Wallet not connected');
-        }
-
-        // Get balance info for specific currency
-        const balanceResult = await makeRPCCall('getaddressbalance', [{
+        console.log('[Verus Background] Getting balances for currencies:');
+        
+        // Get UTXOs for the address with currencynames
+        console.log('[Verus Background] Making RPC call for address:', state.wallet.address);
+        const utxoResponse = await makeRPCCall('getaddressutxos', [{
             addresses: [state.wallet.address],
-            currencyid: currencyId
+            currencynames: true
         }]);
+        
+        console.log('[Verus Background] Raw UTXO response:', JSON.stringify(utxoResponse, null, 2));
 
-        let totalBalance = 0;
-        if (balanceResult && typeof balanceResult.balance === 'number') {
-            totalBalance = balanceResult.balance / 100000000; // Convert from satoshis
-        }
-
-        console.log(`[Verus Background] Balance for ${currencyId}:`, totalBalance);
-        return { success: true, balance: totalBalance.toString() };
-    } catch (err) {
-        console.error('[Verus Background] Error getting currency balance:', err);
-        return { success: false, error: err.message };
-    }
-}
-
-async function handleGetAllBalances(currencies) {
-    try {
-        console.log('[Verus Background] Getting balances for currencies:', currencies);
-        if (!Array.isArray(currencies)) {
-            throw new Error('Currencies must be an array');
+        if (!utxoResponse || !Array.isArray(utxoResponse)) {
+            throw new Error('Invalid UTXO response');
         }
 
         const balances = {};
         
-        // Get balance info for all currencies in parallel
-        const balanceResults = await Promise.all(
-            currencies.map(currency => 
-                makeRPCCall('getaddressbalance', [{
-                    addresses: [state.wallet.address],
-                    currencyid: currency.currencyid
-                }]).catch(err => {
-                    console.warn(`[Verus Background] Failed to get balance for ${currency.currencyid}:`, err);
-                    return null;
-                })
-            )
-        );
+        // First handle VRSCTEST balance
+        let vrscBalance = 0;
+        utxoResponse.forEach(utxo => {
+            if (utxo.satoshis) {
+                vrscBalance += utxo.satoshis / 100000000;
+            }
+        });
+        // Store VRSCTEST balance under both name and currencyid for consistency
+        const vrscBalanceString = vrscBalance.toFixed(8);
+        balances['VRSCTEST'] = vrscBalanceString;
+        balances['iJhCezBExJHvtyH3fGhNnt2NhU4Ztkf2yq'] = vrscBalanceString; // VRSCTEST currencyid
 
-        // Process balances
-        currencies.forEach((currency, index) => {
-            const balanceResult = balanceResults[index];
-            if (balanceResult && typeof balanceResult.balance === 'number') {
-                balances[currency.currencyid] = (balanceResult.balance / 100000000).toString();
-            } else {
-                balances[currency.currencyid] = '0';
+        // Then handle other currencies from currencyvalues
+        utxoResponse.forEach(utxo => {
+            if (utxo.currencyvalues) {
+                Object.entries(utxo.currencyvalues).forEach(([currencyId, amount]) => {
+                    const currentBalance = parseFloat(balances[currencyId] || '0');
+                    balances[currencyId] = (currentBalance + parseFloat(amount)).toFixed(8);
+                });
             }
         });
 
@@ -371,6 +332,45 @@ async function handleGetAllBalances(currencies) {
     } catch (err) {
         console.error('[Verus Background] Error getting all balances:', err);
         throw err;
+    }
+}
+
+async function handleGetCurrencyBalance(currencyId) {
+    try {
+        if (!state.wallet?.address) {
+            throw new Error('Wallet not connected');
+        }
+
+        // Get UTXOs for the address with currencynames
+        const utxoResponse = await makeRPCCall('getaddressutxos', [{
+            addresses: [state.wallet.address],
+            currencynames: true
+        }]);
+        
+        console.log('[Verus Background] UTXO response:', utxoResponse);
+
+        if (!utxoResponse || !Array.isArray(utxoResponse)) {
+            throw new Error('Invalid UTXO response');
+        }
+
+        let totalBalance = 0;
+
+        // Filter and sum UTXOs for this currency
+        utxoResponse.forEach(utxo => {
+            if (currencyId === 'VRSCTEST' && utxo.satoshis) {
+                totalBalance += utxo.satoshis / 100000000;
+            } else if (utxo.currencynames && utxo.currencynames[currencyId]) {
+                totalBalance += parseFloat(utxo.currencynames[currencyId]);
+            } else if (utxo.currencyvalues && utxo.currencyvalues[currencyId]) {
+                totalBalance += parseFloat(utxo.currencyvalues[currencyId]);
+            }
+        });
+
+        console.log(`[Verus Background] Balance for ${currencyId}:`, totalBalance);
+        return { success: true, balance: totalBalance.toFixed(8) };
+    } catch (err) {
+        console.error('[Verus Background] Error getting currency balance:', err);
+        return { success: false, error: err.message };
     }
 }
 
@@ -731,7 +731,7 @@ async function handleGetCurrencies(message, sender, sendResponse) {
         });
 
         // Start fetching balances in the background
-        handleGetAllBalances(processedCurrencies).then(balances => {
+        handleGetAllBalances().then(balances => {
             chrome.storage.local.set({ balances });
             console.log('[Verus Background] Updated balances in background:', balances);
         }).catch(err => {

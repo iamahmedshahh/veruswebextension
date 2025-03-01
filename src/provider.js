@@ -76,10 +76,27 @@ class VerusProvider {
     }
 
     handleAllBalancesResponse(data) {
+        console.log('[Verus Provider] Handling all balances response:', data);
         if (!data.success || data.error) {
             this.rejectRequest('getAllBalances', new Error(data.error || 'Failed to get balances'));
         } else {
-            this.resolveRequest('getAllBalances', data.balances);
+            // Handle both old and new balance formats
+            const balances = {};
+            if (data.balances && typeof data.balances === 'object') {
+                Object.entries(data.balances).forEach(([currencyId, balanceData]) => {
+                    // Handle both string balances and object balances
+                    if (typeof balanceData === 'string') {
+                        balances[currencyId] = balanceData;
+                    } else if (balanceData && typeof balanceData === 'object' && typeof balanceData.balance === 'string') {
+                        balances[currencyId] = balanceData.balance;
+                    } else {
+                        console.warn(`[Verus Provider] Invalid balance data for ${currencyId}:`, balanceData);
+                        balances[currencyId] = '0.00000000';
+                    }
+                });
+            }
+            console.log('[Verus Provider] Transformed balances:', balances);
+            this.resolveRequest('getAllBalances', { success: true, balances });
         }
     }
 
