@@ -8,6 +8,9 @@ import BigInteger from 'bigi';
 import { store } from '../store/index.js';
 import { NETWORKS } from '../config/networks';
 import bs58 from 'bs58'; // Add bs58 import
+import crypto from 'crypto'; // Import crypto module
+import { Buffer } from 'buffer';
+import { sha256 } from 'js-sha256';
 
 // Polyfill Buffer for browser compatibility
 global.Buffer = Buffer;
@@ -23,10 +26,14 @@ function getNetworkConfig() {
 // Constants
 const SATS_PER_COIN = 1e8;
 const DEFAULT_FEE = 20000; // 0.0002 VRSC/VRSCTEST
+const DEFAULT_VIA_CURRENCY = 'SPORTS'; // Default intermediate currency for conversions
+const DEFAULT_CONVERT_TO = 'SAILING'; // Default target currency for conversions
 
 // Currency ID mapping
 const CURRENCY_IDS = {
-    'USD': 'iFawzbS99RqGs7J2TNxME1TmmayBGuRkA2'  // USD testnet currency ID
+    'USD': 'iFawzbS99RqGs7J2TNxME1TmmayBGuRkA2',  // USD testnet currency ID
+    'SPORTS': 'iK3jCnnhGxkiXMYn3fhXnEhPd9gT2KME6Q', // SPORTS currency ID
+    'SAILING': 'iSAiLinGnEwcurrEncyiDhEre123456789' // SAILING currency ID (replace with actual ID)
 };
 
 /**
@@ -136,55 +143,63 @@ function getCurrencyValueFromUtxo(utxo, currency) {
 /**
  * Create currency output script
  * @param {string} address - Recipient address
- * @param {string} currency - Currency symbol
- * @returns {Buffer} Output script
+ * @param {string} currencyId - Currency ID
+ * @returns {Object} Script information
  */
-function createCurrencyOutputScript(address, currency) {
-    if (!currency || currency === store.getters['network/mainCoin']) {
-        return null; // Use default script for main coin
-    }
-
-    const currencyId = CURRENCY_IDS[currency];
-    if (!currencyId) {
-        throw new Error(`Unknown currency: ${currency}`);
-    }
-
+function createCurrencyOutputScript(address, currencyId) {
     try {
-        // Looking at the working input script format:
-        // 1a040300010114<address_hash>cc36040309010114<address_hash>1b01<currency_bytes>
-        const addressHash = bs58.decode(address).slice(1, -4); // Remove version and checksum
+        // Decode the address using bs58
+        const addressBytes = bs58.decode(address);
+        // Remove version byte (1 byte) and checksum (4 bytes)
+        const addressHash = Array.from(addressBytes.slice(1, -4));
+
+        // Convert currencyId to bytes
+        const currencyBytes = Array.from(Buffer.from(currencyId));
         
-        // Convert currency ID to bytes and create a checksum
-        const currencyIdBytes = bs58.decode(currencyId.slice(1)); // Remove 'i' prefix
-        const currencyChecksum = Buffer.alloc(4);
-        for (let i = 0; i < 4; i++) {
-            currencyChecksum[i] = currencyIdBytes[currencyIdBytes.length - 4 + i];
-        }
-        const currencyHashBytes = currencyIdBytes.slice(0, -4); // Remove checksum
+        // Create version and length prefix for currency
+        const currencyHashBytes = [
+            0x01, // Version
+            currencyBytes.length // Length of currency ID
+        ].concat(currencyBytes);
 
-        const script = Buffer.concat([
-            Buffer.from([0x1a, 0x04, 0x03, 0x00, 0x01, 0x01]), // Header
-            Buffer.from([0x14]), // Address length (20 bytes)
-            addressHash, // Address hash (20 bytes)
-            Buffer.from([0xcc, 0x36, 0x04, 0x03, 0x09, 0x01]), // Separator and flags
-            Buffer.from([0x01, 0x14]), // Length markers
-            addressHash, // Address hash again
-            Buffer.from([0x1b, 0x01]), // End marker and length
-            currencyHashBytes // Currency hash bytes (without checksum)
-        ]);
+        // Calculate checksum (first 4 bytes of double SHA256)
+        const firstHash = sha256(Buffer.from(currencyHashBytes));
+        const secondHash = sha256(Buffer.from(firstHash));
+        const checksum = Array.from(Buffer.from(secondHash).slice(0, 4));
 
-        console.log('Created currency script:', {
+        // Construct the full script
+        const script = [
+            0x1a, // OP_CONVERT
+            0x04, // Number of elements
+            0x03, // Version
+            0x00, // Reserved
+            0x01, // Number of currency outputs
+            0x01, // Output index
+            ...addressHash,
+            0xcc, // Currency marker
+            0x36, // Length of currency data
+            0x04, // Version
+            0x03, // Reserved
+            0x09, // Type
+            0x01, // Number of currency inputs
+            0x01, // Input index
+            ...addressHash,
+            0x1b, // Currency definition
+            0x01, // Version
+            0x01, // Reserved
+            ...currencyHashBytes
+        ];
+
+        return {
             currencyId,
-            addressHash: addressHash.toString('hex'),
-            currencyHashBytes: currencyHashBytes.toString('hex'),
-            currencyChecksum: currencyChecksum.toString('hex'),
-            fullScript: script.toString('hex')
-        });
-
-        return script;
+            addressHash: addressHash.join(','),
+            currencyHashBytes: currencyHashBytes.join(','),
+            currencyChecksum: checksum.map(b => b.toString(16).padStart(2, '0')).join(''),
+            fullScript: Buffer.from(script).toString('hex')
+        };
     } catch (error) {
-        console.error('Error in createCurrencyOutputScript:', error);
-        throw error;
+        console.error('Error creating currency output script:', error);
+        return null;
     }
 }
 
@@ -336,8 +351,8 @@ async function sendCurrency(fromAddressOrParams, toAddress, amount, privateKey, 
                 if (!currencyScript) {
                     throw new Error(`Failed to create output script for ${params.currency}`);
                 }
-                console.log('Currency script created:', currencyScript.toString('hex'));
-                txBuilder.addOutput(currencyScript, amountSats);
+                console.log('Currency script created:', currencyScript);
+                txBuilder.addOutput(currencyScript.fullScript, amountSats);
             } catch (error) {
                 console.error('Error creating currency script:', error);
                 throw error;
@@ -355,8 +370,8 @@ async function sendCurrency(fromAddressOrParams, toAddress, amount, privateKey, 
                 try {
                     const changeScript = createCurrencyOutputScript(resolvedFromAddress, params.currency);
                     if (changeScript) {
-                        console.log('Change script created:', changeScript.toString('hex'));
-                        txBuilder.addOutput(changeScript, currencyChange);
+                        console.log('Change script created:', changeScript);
+                        txBuilder.addOutput(changeScript.fullScript, currencyChange);
                     }
                 } catch (error) {
                     console.error('Error creating change script:', error);
@@ -442,6 +457,167 @@ async function sendCurrency(fromAddressOrParams, toAddress, amount, privateKey, 
         return { txid };
     } catch (error) {
         console.error('Error in sendCurrency:', error);
+        throw error;
+    }
+}
+
+/**
+ * Send and convert currency from one type to another
+ * @param {string|Object} fromAddressOrParams - Either sender's address or params object
+ * @param {string} [toAddress] - Recipient's address
+ * @param {number} [amount] - Amount to send
+ * @param {string} [privateKey] - Private key in WIF format
+ * @param {string} [currency] - Currency symbol (defaults to network's main coin)
+ * @param {string} [via] - Intermediate currency for conversion
+ * @param {string} [convertto] - Target currency to convert to
+ */
+async function sendConvertCurrency(fromAddressOrParams, toAddress, amount, privateKey, currency, via = DEFAULT_VIA_CURRENCY, convertto = DEFAULT_CONVERT_TO) {
+    // Handle both parameter styles
+    let params;
+    if (typeof fromAddressOrParams === 'object') {
+        params = {
+            ...fromAddressOrParams,
+            via: fromAddressOrParams.via || DEFAULT_VIA_CURRENCY,
+            convertto: fromAddressOrParams.convertto || DEFAULT_CONVERT_TO
+        };
+    } else {
+        params = {
+            fromAddress: fromAddressOrParams,
+            toAddress,
+            amount,
+            privateKey,
+            currency,
+            via,
+            convertto
+        };
+    }
+
+    try {
+        console.log('Sending convert transaction with params:', {
+            ...params,
+            privateKey: params.privateKey ? '***' : undefined
+        });
+
+        // Validate parameters
+        if (!params.fromAddress || !params.toAddress || !params.amount || !params.privateKey) {
+            throw new Error('Missing required parameters');
+        }
+
+        if (!params.via || !params.convertto) {
+            throw new Error('Missing conversion parameters (via or convertto)');
+        }
+
+        // Get network configuration
+        const network = getNetworkConfig();
+
+        // Create key pair from private key
+        const keyPair = ECPair.fromWIF(params.privateKey, network);
+
+        // Initialize transaction builder
+        const txb = new TransactionBuilder(network);
+        txb.setVersion(4); // Set version for conversion transactions
+
+        // Get UTXOs for the from address
+        const utxosResponse = await makeRPCCall('getaddressutxos', [{
+            addresses: [params.fromAddress],
+            currencynames: true
+        }]);
+
+        if (!Array.isArray(utxosResponse)) {
+            throw new Error('Invalid UTXO response format');
+        }
+
+        if (utxosResponse.length === 0) {
+            throw new Error('No UTXOs found for address');
+        }
+
+        // Filter and sort UTXOs by currency
+        const relevantUtxos = utxosResponse
+            .filter(utxo => {
+                const value = getCurrencyValueFromUtxo(utxo, params.currency);
+                console.log(`UTXO value for ${params.currency}:`, value);
+                return value > 0;
+            })
+            .sort((a, b) => getCurrencyValueFromUtxo(b, params.currency) - getCurrencyValueFromUtxo(a, params.currency));
+
+        if (relevantUtxos.length === 0) {
+            throw new Error(`No UTXOs found with currency ${params.currency}`);
+        }
+
+        // Calculate total available balance
+        const totalAvailable = relevantUtxos.reduce((sum, utxo) => sum + getCurrencyValueFromUtxo(utxo, params.currency), 0);
+
+        if (totalAvailable < params.amount) {
+            throw new Error(`Insufficient balance. Required: ${params.amount}, Available: ${totalAvailable}`);
+        }
+
+        // Add inputs to transaction
+        let inputAmount = 0;
+        for (const utxo of relevantUtxos) {
+            if (!utxo.txid || typeof utxo.outputIndex === 'undefined') {
+                console.error('Invalid UTXO format:', utxo);
+                continue;
+            }
+            txb.addInput(utxo.txid, utxo.outputIndex);
+            inputAmount += getCurrencyValueFromUtxo(utxo, params.currency);
+            if (inputAmount >= params.amount) break;
+        }
+
+        if (inputAmount < params.amount) {
+            throw new Error('Failed to gather enough inputs for transaction');
+        }
+
+        // Create conversion output script
+        const scriptInfo = createCurrencyOutputScript(params.toAddress, params.convertto);
+        if (!scriptInfo) {
+            throw new Error('Failed to create conversion output script');
+        }
+        console.log('Created currency script:', scriptInfo);
+
+        // Create the conversion script
+        const script = Buffer.from(scriptInfo.fullScript, 'hex');
+        
+        // Add via and convertto parameters
+        const viaScript = Buffer.concat([
+            Buffer.from([0x1c]), // Conversion marker
+            Buffer.from([params.via.length]), // Length of via currency
+            Buffer.from(params.via, 'utf8'),  // Via currency name
+            Buffer.from([params.convertto.length]), // Length of target currency
+            Buffer.from(params.convertto, 'utf8')  // Target currency name
+        ]);
+
+        // Combine scripts
+        const finalScript = Buffer.concat([script, viaScript]);
+
+        // Add outputs
+        txb.addOutput(finalScript, toSatoshis(params.amount));
+
+        // Add change output if necessary
+        const change = inputAmount - params.amount - DEFAULT_FEE;
+        if (change > 0) {
+            txb.addOutput(params.fromAddress, toSatoshis(change));
+        }
+
+        // Sign all inputs
+        relevantUtxos.forEach((utxo, index) => {
+            if (index < txb.__inputs.length) {
+                txb.sign(index, keyPair);
+            }
+        });
+
+        // Build and serialize transaction
+        const tx = txb.build();
+        const serializedTx = tx.toHex();
+
+        console.log('Serialized transaction:', serializedTx);
+
+        // Send raw transaction
+        const txid = await makeRPCCall('sendrawtransaction', [serializedTx]);
+        console.log('Convert transaction sent:', txid);
+
+        return txid;
+    } catch (error) {
+        console.error('Error in sendConvertCurrency:', error);
         throw error;
     }
 }
@@ -539,10 +715,15 @@ function validateAddress(address) {
 
 export {
     sendCurrency,
+    sendConvertCurrency,
     estimateFee,
     validateAddress,
+    resolveVerusId,
     isVerusID,
     toSatoshis,
     fromSatoshis,
-    resolveVerusId
-};
+    CURRENCY_IDS,
+    DEFAULT_FEE,
+    DEFAULT_VIA_CURRENCY,
+    DEFAULT_CONVERT_TO
+}

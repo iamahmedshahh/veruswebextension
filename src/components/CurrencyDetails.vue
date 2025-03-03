@@ -56,6 +56,19 @@
               required
             />
           </div>
+          <div class="form-group">
+            <label>
+              <input
+                type="checkbox"
+                v-model="useConversion"
+              /> Enable Currency Conversion
+            </label>
+          </div>
+          <div v-if="useConversion" class="conversion-details">
+            <p class="conversion-info">
+              Converting via SPORTS to SAILING
+            </p>
+          </div>
           <div v-if="error" class="error-message">{{ error }}</div>
           <div class="estimated-fee" v-if="estimatedFee">
             Estimated Fee: {{ estimatedFee }}
@@ -97,6 +110,7 @@ import { useStore } from 'vuex'
 import { useRoute } from 'vue-router'
 import TransactionHistory from './TransactionHistory.vue'
 import QRCode from 'qrcode'
+import { sendCurrency, sendConvertCurrency, DEFAULT_VIA_CURRENCY, DEFAULT_CONVERT_TO } from '../utils/transaction'
 
 const store = useStore()
 const route = useRoute()
@@ -110,6 +124,7 @@ const error = ref('')
 const isLoading = ref(false)
 const estimatedFee = ref(0)
 const receiveQrCode = ref('')
+const useConversion = ref(false)
 
 // Computed
 const currency = computed(() => route.params.currency)
@@ -148,12 +163,38 @@ const executeSend = async () => {
     isLoading.value = true
     error.value = ''
     
-    // TODO: Implement actual send transaction
-    await new Promise(resolve => setTimeout(resolve, 1000)) // Simulated delay
+    const wallet = store.state.wallet
+    if (!wallet || !wallet.privateKey) {
+      throw new Error('Wallet not found or locked')
+    }
+
+    // Execute the transaction based on conversion preference
+    if (useConversion.value) {
+      await sendConvertCurrency({
+        fromAddress: wallet.address,
+        toAddress: recipientAddress.value,
+        amount: parseFloat(amount.value),
+        privateKey: wallet.privateKey,
+        currency: currency.value,
+        // Using default via and convertto from transaction.js
+      })
+    } else {
+      await sendCurrency({
+        fromAddress: wallet.address,
+        toAddress: recipientAddress.value,
+        amount: parseFloat(amount.value),
+        privateKey: wallet.privateKey,
+        currency: currency.value
+      })
+    }
     
     showSendModal.value = false
     recipientAddress.value = ''
     amount.value = ''
+    useConversion.value = false
+    
+    // Refresh balances after successful transaction
+    await store.dispatch('currencies/fetchBalances')
   } catch (err) {
     error.value = err.message || 'Failed to send transaction'
   } finally {
@@ -306,6 +347,15 @@ const copyToClipboard = async (text) => {
 .form-group label {
   font-size: 0.9rem;
   color: var(--text-secondary);
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin-bottom: 0.5rem;
+  cursor: pointer;
+}
+
+.form-group input[type="checkbox"] {
+  margin: 0;
 }
 
 .form-group input {
@@ -370,5 +420,18 @@ const copyToClipboard = async (text) => {
 .qr-container img {
   max-width: 200px;
   height: auto;
+}
+
+.conversion-details {
+  margin: 1rem 0;
+  padding: 0.75rem;
+  background: #f8f9fa;
+  border-radius: 6px;
+  font-size: 0.9rem;
+}
+
+.conversion-info {
+  color: #666;
+  margin: 0;
 }
 </style>

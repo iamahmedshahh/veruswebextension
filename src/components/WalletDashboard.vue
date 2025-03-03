@@ -40,6 +40,7 @@
                     v-for="currency in selectedCurrencies" 
                     :key="currency" 
                     class="currency-card"
+                    @click="navigateToCurrencyDetails(currency)"
                 >
                     <div class="card-content">
                         <div class="card-header">
@@ -183,6 +184,7 @@
 <script>
 import { ref, computed, onMounted, watch, nextTick } from 'vue';
 import { useStore } from 'vuex';
+import { useRouter } from 'vue-router';
 import QRCode from 'qrcode';
 import WalletHeader from './WalletHeader.vue';
 import LoadingBar from './LoadingBar.vue';
@@ -204,6 +206,7 @@ export default {
 
     setup() {
         const store = useStore();
+        const router = useRouter();
         const showSettings = ref(false);
         const showCurrencySelector = ref(false);
         const showSendModal = ref(false);
@@ -371,6 +374,11 @@ export default {
             return addresses[currency]?.address || 'Not available';
         };
 
+        // Navigation function
+        const navigateToCurrencyDetails = (currency) => {
+            router.push(`/currency/${currency}`);
+        };
+
         // Initialize on component mount
         onMounted(async () => {
             try {
@@ -450,7 +458,8 @@ export default {
             handleReceive,
             executeSend,
             updateEstimatedFee,
-            getAddressForCurrency
+            getAddressForCurrency,
+            navigateToCurrencyDetails
         };
     }
 };
@@ -555,10 +564,38 @@ export default {
 }
 
 .currency-card {
-    background: var(--card-bg);
-    border: 1px solid var(--border-color);
-    border-radius: 0.5rem;
-    padding: 1rem;
+    background: white;
+    border-radius: 12px;
+    padding: 1.5rem;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+    margin-bottom: 1rem;
+    cursor: pointer;
+    transition: transform 0.2s, box-shadow 0.2s;
+    position: relative;
+}
+
+.currency-card:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+}
+
+.currency-card::after {
+    content: '';
+    position: absolute;
+    top: 50%;
+    right: 1rem;
+    transform: translateY(-50%);
+    width: 8px;
+    height: 8px;
+    border-top: 2px solid #666;
+    border-right: 2px solid #666;
+    transform: rotate(45deg);
+    opacity: 0.5;
+    transition: opacity 0.2s;
+}
+
+.currency-card:hover::after {
+    opacity: 1;
 }
 
 .add-currency-card {
@@ -672,42 +709,33 @@ export default {
 }
 
 .action-buttons {
+    margin-top: 1rem;
     display: flex;
-    gap: 8px;
-    margin-top: 12px;
+    gap: 0.5rem;
 }
 
 .action-btn {
     flex: 1;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    gap: 6px;
-    padding: 8px;
+    padding: 0.5rem;
     border: none;
-    border-radius: 8px;
-    font-size: 14px;
-    font-weight: 500;
+    border-radius: 6px;
     cursor: pointer;
-    transition: opacity 0.2s;
-}
-
-.action-btn:hover {
-    opacity: 0.9;
+    font-weight: 500;
+    transition: background-color 0.2s;
 }
 
 .action-btn.send {
-    background-color: #4CAF50;
+    background-color: var(--primary-color);
     color: white;
 }
 
 .action-btn.receive {
-    background-color: #2196F3;
+    background-color: var(--secondary-color);
     color: white;
 }
 
-.action-btn i {
-    font-size: 12px;
+.action-btn:hover {
+    filter: brightness(1.1);
 }
 
 .send-modal {
