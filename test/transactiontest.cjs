@@ -1,12 +1,13 @@
 const pkg = require('@bitgo/utxo-lib');
-const { ECPair, TransactionBuilder, script, opcodes, Transaction } = pkg;
+const { ECPair, TransactionBuilder, Transaction, script, networks, opcodes } = pkg;
+const bs58 = require('bs58');
 
 // Static configuration
-const TEST_PRIVATE_KEY = '';
+const TEST_PRIVATE_KEY = 'UwpJqNV91Ezbv4YbdqPAzyT36scbWm9uaRmHqPVC3xa6u5KPJydD'; // Add your private key here
 const TEST_ADDRESS = 'RV2sJNR3Vi5nJT5h7AsNah7gPKTQaJ8e2L';
-const TEST_CURRENCY = 'VRSCTEST';
-const TEST_CONVERT_TO = 'vETH';
-const TEST_VIA_CURRENCY = 'VRSCTEST';
+const TEST_CURRENCY = 'VRSCTEST';  // The currency you want to convert from
+const TEST_CONVERT_TO = 'VETH';  // The currency you want to convert to
+const TEST_VIA_CURRENCY = 'BRIDGE.VETH';  // The intermediate currency for conversion
 
 // Network configuration for Verus
 const NETWORK = {
@@ -18,40 +19,61 @@ const NETWORK = {
     },
     pubKeyHash: 0x3c,
     scriptHash: 0x55,
-    wif: 0xBC,
+    wif: 0xbc,
     consensusBranchId: {
         1: 0x00,
         2: 0x00,
         3: 0x5ba81b19,
         4: 0x76b809bb
     },
-    isZcash: false,  // Changed to false to disable Zcash-specific features
-    coin: 'verus'
+    isZcash: true,  // Changed to true to enable Zcash transaction format
+    coin: 'verus',
+    consensusParams: {
+        overwinterActive: true,
+        saplingActive: true
+    }
 };
 
 // RPC Configuration
-const RPC_CONFIG = {
-    server: 'https://api.verustest.net',  // Verus testnet RPC URL
-    auth: null  // No auth for public API
+const RPC_SERVER = 'https://api.verustest.net';  // Verus testnet RPC URL with endpoint
+
+// Currency ID mapping
+const CURRENCY_IDS = {
+    'USD': 'iFawzbS99RqGs7J2TNxME1TmmayBGuRkA2',
+    'VRSCTEST': 'iJhCezBExJHvtyH3fGhNnt2NhU4Ztkf2yq',
+    'VETH': 'iCkKJuJScy4Z6NSDK7Mt42ZAB2NzVdR4zP',
+    'BRIDGE.VETH': 'iNa6T62QzN9JBS1RpCQEbRgpLGCgBWiwE8'
 };
+
+function getCurrencyId(symbol) {
+    return CURRENCY_IDS[symbol] || symbol;
+}
+
+function addressToHash160(address) {
+    const decoded = bs58.decode(address);
+    return decoded.slice(1, 21); // Skip network byte and take next 20 bytes
+}
 
 /**
  * Make an RPC call to the Verus daemon
- * @param {string} method - The RPC method to call
- * @param {Array} params - The parameters to pass to the method
- * @returns {Promise<any>} - The response from the RPC server
+ * @param {string} method - RPC method to call
+ * @param {Array} params - RPC parameters
+ * @param {string} currency - Optional currency for currency-specific calls
+ * @returns {Promise<any>} RPC result
  */
-async function makeRPCCall(method, params = []) {
+async function makeRPCCall(method, params = [], currency = null) {
     try {
-        const RPC_SERVER = `${RPC_CONFIG.server}/vrsctest`;
+        // Add currency to path for currency-specific endpoints
+        const rpcUrl = currency ? `${RPC_SERVER}/${currency.toLowerCase()}` : `${RPC_SERVER}/vrsctest`;
         
-        console.log('RPC call:', method, params);
+        console.log('RPC call:', method, JSON.stringify(params));
+        console.log('RPC URL:', rpcUrl);
         
-        const response = await fetch(RPC_SERVER, {
+        const response = await fetch(rpcUrl, {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json',
-                'Accept': 'application/json',
+                'Accept': 'application/json'
             },
             body: JSON.stringify({
                 method: method,
@@ -60,17 +82,37 @@ async function makeRPCCall(method, params = []) {
                 jsonrpc: '2.0'
             })
         });
-
+        
+        // Check for HTTP errors
         if (!response.ok) {
-            throw new Error(`HTTP error! status: ${response.status}`);
+            const errorBody = await response.text();
+            console.error('HTTP error:', response.status, errorBody);
+            throw new Error(`HTTP error ${response.status}: ${errorBody}`);
         }
-
-        const data = await response.json();
-
+        
+        // Parse JSON response carefully
+        let data;
+        try {
+            const responseText = await response.text();
+            console.log('Raw RPC response text:', responseText);
+            data = JSON.parse(responseText);
+        } catch (parseError) {
+            console.error('JSON parse error:', parseError);
+            throw new Error(`Failed to parse JSON response: ${parseError.message}`);
+        }
+        
+        // Check for RPC errors
         if (data.error) {
-            throw new Error(data.error.message || 'RPC call failed');
+            console.error('RPC error:', data.error);
+            throw new Error(`RPC error: ${JSON.stringify(data.error)}`);
         }
-
+        
+        console.log('RPC response:', {
+            result: typeof data.result === 'string' && data.result.length > 100 
+                ? `${data.result.substring(0, 100)}...` 
+                : data.result
+        });
+        
         return data.result;
     } catch (error) {
         console.error('RPC call failed:', error);
@@ -78,332 +120,141 @@ async function makeRPCCall(method, params = []) {
     }
 }
 
-/**
- * Send currency from one address to another
- * @param {Object} params - Transaction parameters
- * @param {string} params.fromAddress - Sender address
- * @param {string} params.toAddress - Recipient address
- * @param {number} params.amount - Amount to send
- * @param {string} params.currency - Currency to send
- * @param {string} params.privateKey - Private key for signing
- * @returns {Promise<Object>} Transaction result
- */
-async function sendCurrency(params) {
-    try {
-        console.log('Starting sendCurrency with params:', params);
-        
-        // Convert amount to satoshis
-        const amountSat = Math.round(params.amount * 100000000);
-        console.log('Amount in satoshis:', amountSat);
-        
-        // Build and sign the transaction
-        const tx = await buildAndSignTransaction(params.fromAddress, params.toAddress, amountSat, params.privateKey);
-        
-        // Broadcast the transaction
-        const txid = await broadcastTransaction(tx.toHex());
-        
-        // Return the transaction details
-        return {
-            txid,
-            fromAddress: params.fromAddress,
-            toAddress: params.toAddress,
-            amount: params.amount,
-            txHex: tx.toHex()
-        };
-    } catch (error) {
-        console.error('Error sending currency:', error);
-        throw error;
-    }
-}
+// Constants
+const SATS_PER_COIN = 100000000; // 1 VRSC = 100,000,000 satoshis
+const DEFAULT_FEE = 10000; // 0.0001 VRSC
 
 /**
- * Send a currency conversion transaction
- * @param {string} fromAddress - Source address or "*" for any available address
+ * Build and sign a transaction
+ * @param {string} fromAddress - Source address
  * @param {string} toAddress - Destination address
- * @param {number} amount - Amount to send
- * @param {string} convertTo - Currency ID to convert to
- * @param {string} viaCurrency - Optional intermediate currency ID for conversion
- * @param {Object} options - Additional options
- * @returns {Promise<Object>} Transaction result
- */
-async function sendCurrencyConversion(fromAddress, toAddress, amount, convertTo, viaCurrency = null, options = {}) {
-    try {
-        console.log(`Sending conversion transaction: ${amount} from ${fromAddress} to ${toAddress} converting to ${convertTo}${viaCurrency ? ` via ${convertTo}` : ''}`);
-        
-        // Prepare the outputs array with conversion parameters
-        const outputs = [{
-            address: toAddress,
-            amount: amount,
-            convertto: convertTo
-        }];
-        
-        // Add via parameter if provided
-        if (viaCurrency) {
-            outputs[0].via = viaCurrency;
-        }
-        
-        // Add any additional options
-        if (options.memo) {
-            outputs[0].memo = options.memo;
-        }
-        
-        // Make the RPC call to send the currency with conversion
-        const result = await makeRPCCall('sendcurrency', [fromAddress, outputs]);
-        
-        return {
-            txid: result,
-            fromAddress,
-            toAddress,
-            amount,
-            convertTo,
-            viaCurrency
-        };
-    } catch (error) {
-        console.error('Error sending conversion transaction:', error);
-        throw new Error(`Failed to send conversion transaction: ${error.message}`);
-    }
-}
-
-/**
- * Estimate conversion between currencies
- * @param {number} amount - Amount to convert
- * @param {string} fromCurrency - Currency to convert from
- * @param {string} toCurrency - Currency to convert to
- * @param {string} viaCurrency - Currency to convert via
- * @returns {Promise<Object>} Conversion estimate
- */
-async function estimateConversion(amount, fromCurrency, toCurrency, viaCurrency) {
-    try {
-        console.log(`Estimating conversion: ${amount} ${fromCurrency} -> ${toCurrency} via ${viaCurrency}`);
-        
-        // Prepare parameters for the estimateconversion RPC call
-        const params = {
-            amount: amount,
-            currency: fromCurrency,
-            convertto: toCurrency
-        };
-        
-        // Add via currency if provided
-        if (viaCurrency) {
-            params.via = viaCurrency;
-        }
-        
-        // Make RPC call to estimate conversion
-        const result = await makeRPCCall('estimateconversion', [params]);
-        
-        // Format the result
-        return {
-            fromCurrency,
-            toCurrency,
-            viaCurrency,
-            inputAmount: amount,
-            convertedAmount: result.estimatedcurrencyout,
-            conversionRate: result.estimatedcurrencyout / amount
-        };
-    } catch (error) {
-        console.error('Error estimating conversion:', error);
-        throw error;
-    }
-}
-
-/**
- * Run a test conversion transaction
- * @param {string} fromCurrency - Source currency ID
- * @param {string} toCurrency - Target currency ID
- * @param {number} amount - Amount to convert
- * @param {string} toAddress - Destination address
- * @param {string} viaCurrency - Optional intermediate currency ID for conversion
- * @returns {Promise<void>}
- */
-async function testConversionTransaction(fromCurrency, toCurrency, amount, toAddress, viaCurrency = null) {
-    try {
-        // First estimate the conversion to show expected results
-        const estimate = await estimateConversion(amount, fromCurrency, toCurrency, viaCurrency);
-        console.log('Estimated conversion:', JSON.stringify(estimate, null, 2));
-        
-        // Ask for confirmation before proceeding
-        console.log(`Ready to send ${amount} ${fromCurrency} to ${toAddress} converting to ${toCurrency}${viaCurrency ? ` via ${toCurrency}` : ''}`);
-        console.log(`Expected to receive approximately: ${estimate.convertedAmount} ${toCurrency}`);
-        
-        // Send the conversion transaction
-        // Using "*" as fromAddress to let the wallet choose an appropriate source address
-        const txResult = await sendCurrencyConversion("*", toAddress, amount, toCurrency, viaCurrency);
-        
-        console.log('Transaction sent successfully!');
-        console.log('Transaction ID:', txResult.txid);
-        console.log('Transaction details:', JSON.stringify(txResult, null, 2));
-        
-        return txResult;
-    } catch (error) {
-        console.error('Error in test conversion transaction:', error);
-        throw error;
-    }
-}
-
-/**
- * Send a currency conversion transaction using UTXO library
- * @param {Object} params - Parameters for sending currency conversion
- * @param {string} params.fromAddress - Address to send from
- * @param {string} params.toAddress - Address to send to
- * @param {number} params.amount - Amount to send
- * @param {string} params.convertTo - Currency to convert to
- * @param {string} params.viaCurrency - Currency to convert via
- * @param {string} params.privateKey - Private key for signing
- * @param {string} params.currency - Currency to send
+ * @param {number} amount - Amount to send in VRSC
+ * @param {string} privateKey - Private key for signing
  * @returns {Promise<Object>} Transaction details
  */
-async function sendCurrencyConversionWithUTXO(params) {
+async function buildAndSignTransaction(fromAddress, toAddress, amount, privateKey) {
     try {
-        console.log(`Building conversion transaction: ${params.amount} from ${params.fromAddress} to ${params.toAddress} converting to ${params.convertTo} via ${params.viaCurrency}`);
+        console.log(`Building transaction from ${fromAddress} to ${toAddress} for ${amount} VRSCTEST`);
         
         // Convert amount to satoshis
-        const amountSat = Math.round(params.amount * 100000000);
+        const amountSat = Math.round(amount * SATS_PER_COIN);
         console.log('Amount in satoshis:', amountSat);
         
-        // Fetch UTXOs
-        const utxos = await fetchUTXOs(params.fromAddress);
-        console.log('Raw UTXOs:', utxos);
-        console.log('Found UTXOs:', utxos.length);
+        // Get UTXOs
+        const utxos = await fetchUTXOs(fromAddress);
+        console.log(`Found ${utxos.length} UTXOs`);
         
-        // Filter UTXOs for the specified currency
-        const relevantUtxos = utxos.filter(utxo => {
-            // For VRSC/VRSCTEST, we want UTXOs with satoshis
-            if (params.currency === 'VRSC' || params.currency === 'VRSCTEST') {
-                return utxo.satoshis > 0;
-            }
-            // For other currencies, we'd need to check currencyvalues
-            return utxo.currencyvalues && utxo.currencyvalues[params.currency];
-        });
-        console.log('Relevant UTXOs:', relevantUtxos);
-        console.log('Relevant UTXOs for currency:', relevantUtxos.length);
-        
-        if (relevantUtxos.length === 0) {
-            throw new Error(`No UTXOs found for currency: ${params.currency}`);
+        if (utxos.length === 0) {
+            throw new Error(`No UTXOs available for ${fromAddress}`);
         }
         
-        // Create transaction builder
+        // Find a suitable UTXO with enough funds
+        let selectedUtxo = null;
+        const fee = DEFAULT_FEE;
+        
+        for (const utxo of utxos) {
+            if (utxo.satoshis >= amountSat + fee) {
+                selectedUtxo = utxo;
+                break;
+            }
+        }
+        
+        if (!selectedUtxo) {
+            // Use the largest UTXO available
+            selectedUtxo = utxos.reduce((max, current) => 
+                (current.satoshis > (max?.satoshis || 0)) ? current : max, null);
+            
+            if (selectedUtxo.satoshis < amountSat + fee) {
+                throw new Error(`Insufficient funds. Required: ${(amountSat + fee) / SATS_PER_COIN} VRSC, Available: ${selectedUtxo.satoshis / SATS_PER_COIN} VRSC`);
+            }
+        }
+        
+        console.log('Selected UTXO:', selectedUtxo);
+        
+        // Create transaction builder with Verus network
         const txb = new TransactionBuilder(NETWORK);
         
-        // Set version for Verus transactions (version 4)
+        // Critical: Set the version to 4 for Verus
         txb.setVersion(4);
         
-        // Add inputs
-        let totalInput = 0;
-        relevantUtxos.forEach(utxo => {
-            txb.addInput(utxo.txid, utxo.vout);
-            totalInput += utxo.satoshis;
-        });
+        // Add the input
+        txb.addInput(selectedUtxo.txid, selectedUtxo.vout);
         
-        // Create OP_RETURN output with conversion data
-        const conversionData = {
-            convertto: params.convertTo,
-            via: params.viaCurrency
-        };
-        const conversionDataBuffer = Buffer.from(JSON.stringify(conversionData));
-        const opReturnScript = script.compile([
-            opcodes.OP_RETURN,
-            conversionDataBuffer
-        ]);
-        txb.addOutput(opReturnScript, 0);
+        // Add the output (recipient)
+        txb.addOutput(toAddress, amountSat);
         
-        // Add payment output
-        txb.addOutput(params.toAddress, amountSat);
+        // Calculate change amount
+        const changeAmount = selectedUtxo.satoshis - amountSat - fee;
+        console.log('Change amount (satoshis):', changeAmount);
         
-        // Add change output (if needed)
-        const fee = 10000; // 0.0001 VRSC
-        if (totalInput > amountSat + fee) {
-            txb.addOutput(params.fromAddress, totalInput - amountSat - fee);
+        // Add change output if needed
+        if (changeAmount > 546) { // dust threshold
+            txb.addOutput(fromAddress, changeAmount);
         }
         
-        // Sign inputs
-        const keyPair = ECPair.fromWIF(params.privateKey, NETWORK);
-        for (let i = 0; i < relevantUtxos.length; i++) {
-            txb.sign(i, keyPair);
-        }
+        // Sign the transaction input
+        const keyPair = ECPair.fromWIF(privateKey, NETWORK);
+        txb.sign(0, keyPair, null, Transaction.SIGHASH_ALL, selectedUtxo.satoshis);
         
-        // Build transaction
+        // Build the transaction
         const tx = txb.build();
-        const txHex = tx.toHex();
+        let txHex = tx.toHex();
         
-        // Broadcast transaction
-        const txid = await broadcastTransaction(txHex);
+        // IMPORTANT: Modify the transaction hex to include the Verus version group ID
+        // Verus requires version group ID after the version bytes: 85202f89
+        console.log('Original transaction hex:', txHex);
         
-        // Return transaction details
+        // Insert the version group ID after the version (first 8 characters in hex)
+        const verusVersionGroupId = '85202f89';
+        txHex = txHex.substring(0, 8) + verusVersionGroupId + txHex.substring(8);
+        
+        console.log('Modified transaction hex with Verus version group ID:', txHex);
+        
+        console.log('Transaction built successfully');
+        console.log('- Transaction version:', tx.version);
+        console.log('- Inputs:', tx.ins.length);
+        console.log('- Outputs:', tx.outs.length);
+        console.log('- Transaction size:', txHex.length / 2, 'bytes');
+        
+        // Return the modified transaction details
         return {
-            txid,
-            fromAddress: params.fromAddress,
-            toAddress: params.toAddress,
-            amount: params.amount,
-            convertTo: params.convertTo,
-            viaCurrency: params.viaCurrency,
-            txHex
+            hex: txHex,
+            txid: tx.getId(), // Note: txid will change but we can recalculate if needed
+            inputs: [{
+                txid: selectedUtxo.txid,
+                vout: selectedUtxo.vout,
+                satoshis: selectedUtxo.satoshis
+            }],
+            outputs: [
+                { address: toAddress, satoshis: amountSat },
+                ...(changeAmount > 546 ? [{ address: fromAddress, satoshis: changeAmount }] : [])
+            ]
         };
     } catch (error) {
-        console.error('Error sending currency conversion:', error);
+        console.error('Error building transaction:', error);
         throw error;
     }
 }
 
 /**
- * Test conversion transaction using UTXO library
- * @param {Object} params - Transaction parameters
- * @param {string} params.fromAddress - Address to send from
- * @param {string} params.toAddress - Address to send to
- * @param {number} params.amount - Amount to send
- * @param {string} params.currency - Currency to send
- * @param {string} params.convertTo - Currency to convert to
- * @param {string} params.viaCurrency - Currency to convert via
- * @param {string} params.privateKey - Private key for signing
- * @returns {Promise<Object>} Transaction result
- */
-async function testConversionTransactionWithUTXO(params) {
-    try {
-        console.log(`Testing UTXO conversion transaction: ${params.amount} from ${params.fromAddress} to ${params.toAddress} converting to ${params.convertTo} via ${params.viaCurrency}`);
-        
-        // First, estimate the conversion
-        const estimate = await estimateConversion(params.amount, params.currency, params.convertTo, params.viaCurrency);
-        console.log('Estimated conversion:', estimate);
-        
-        console.log(`Ready to send ${params.amount} from ${params.fromAddress} to ${params.toAddress} converting to ${params.convertTo} via ${params.viaCurrency}`);
-        console.log(`Expected to receive approximately: ${estimate.convertedAmount} ${params.convertTo}`);
-        
-        // Now send the conversion transaction
-        const result = await sendCurrencyConversionWithUTXO(params);
-        
-        console.log('Conversion transaction complete:', JSON.stringify(result, null, 2));
-        
-        return result;
-    } catch (error) {
-        console.error('Error testing conversion transaction:', error);
-        throw error;
-    }
-}
-
-/**
- * Fetch UTXOs for a given address
+ * Fetch UTXOs for an address
  * @param {string} address - Address to fetch UTXOs for
- * @returns {Promise<Array>} Array of UTXOs
+ * @returns {Promise<Array>} UTXOs
  */
 async function fetchUTXOs(address) {
     try {
-        console.log('Fetching UTXOs for address:', address);
+        console.log(`Fetching UTXOs for ${address}`);
         
-        // Get UTXOs from the API
-        const result = await makeRPCCall('getaddressutxos', [{
-            addresses: [address]
-        }]);
+        const result = await makeRPCCall('getaddressutxos', [{ addresses: [address] }]);
         
-        console.log('Raw UTXOs:', result);
-        
-        // Transform the UTXOs to a format compatible with BitGo's library
+        // Transform to format needed by BitGo library
         return result.map(utxo => ({
             txid: utxo.txid,
-            vout: utxo.outputIndex,
-            scriptPubKey: utxo.script,
-            amount: utxo.satoshis / 100000000,
-            satoshis: utxo.satoshis,
+            vout: utxo.outputIndex || 0,
+            satoshis: utxo.satoshis || 0,
+            script: utxo.script,
             address: address,
-            currencyvalues: utxo.currencyvalues
+            currencyvalues: utxo.currencyvalues || {}
         }));
     } catch (error) {
         console.error('Error fetching UTXOs:', error);
@@ -413,18 +264,30 @@ async function fetchUTXOs(address) {
 
 /**
  * Broadcast a transaction to the network
- * @param {string} txHex - Transaction hex to broadcast
+ * @param {string} txHex - Signed transaction hex
  * @returns {Promise<string>} Transaction ID
  */
 async function broadcastTransaction(txHex) {
     try {
-        console.log('Broadcasting transaction...');
-        console.log('Transaction hex:', txHex);
+        console.log('Broadcasting transaction');
         
-        // Send the raw transaction to the network
+        // First try to decode to verify format
+        try {
+            const decoded = await makeRPCCall('decoderawtransaction', [txHex]);
+            console.log('Transaction decoded successfully:');
+            console.log('- txid:', decoded.txid);
+            console.log('- version:', decoded.version);
+            console.log('- inputs:', decoded.vin.length);
+            console.log('- outputs:', decoded.vout.length);
+        } catch (decodeError) {
+            console.error('ERROR: Transaction decode failed. This indicates an invalid transaction format.');
+            console.error(decodeError);
+            throw new Error('Transaction format is invalid');
+        }
+        
+        // If decode is successful, broadcast
         const txid = await makeRPCCall('sendrawtransaction', [txHex]);
-        
-        console.log('Transaction sent successfully!');
+        console.log('Transaction broadcast successful!');
         console.log('Transaction ID:', txid);
         
         return txid;
@@ -435,210 +298,31 @@ async function broadcastTransaction(txHex) {
 }
 
 /**
- * Convert address to script
- * @param {string} address - Address to convert
- * @returns {Buffer} Script buffer
- */
-function addressToScript(address) {
-    // For testing purposes, we'll return a hardcoded script for the test address
-    if (address === 'RV2sJNR3Vi5nJT5h7AsNah7gPKTQaJ8e2L') {
-        return Buffer.from('76a914d8ad044d8ec9e0267fe379b3e8e33add89634c2888ac', 'hex');
-    }
-    
-    // For P2PKH addresses (starting with R)
-    if (address.startsWith('R')) {
-        // In a real implementation, you would decode the address and create the proper script
-        // For now, we'll just throw an error for addresses we don't have hardcoded
-        throw new Error(`Address not supported for testing: ${address}`);
-    }
-    
-    // For other address types
-    throw new Error(`Unsupported address type: ${address}`);
-}
-
-/**
- * Resolve Verus ID to transparent address
- * @param {string} verusId - Verus ID to resolve
- * @returns {Promise<string>} Resolved address
- */
-async function resolveVerusId(verusId) {
-    try {
-        console.log('Resolving Verus ID:', verusId);
-        
-        // Validate Verus ID format
-        if (!verusId.startsWith('i')) {
-            throw new Error('Not a valid Verus ID format - must start with "i"');
-        }
-
-        const response = await makeRPCCall('getidentity', [verusId]);
-        console.log('Identity info:', JSON.stringify(response, null, 2));
-        
-        if (!response || !response.identity) {
-            throw new Error(`Could not resolve Verus ID: ${verusId}`);
-        }
-
-        const identityInfo = response.identity;
-
-        // Check for identity address in different possible locations
-        // First try primary addresses
-        if (identityInfo.primaryaddresses && identityInfo.primaryaddresses.length > 0) {
-            const primaryAddress = identityInfo.primaryaddresses[0];
-            console.log('Found primary address:', primaryAddress);
-            return primaryAddress;
-        }
-
-        // Then try identity address
-        if (identityInfo.identityaddress) {
-            console.log('Found identity address:', identityInfo.identityaddress);
-            return identityInfo.identityaddress;
-        }
-
-        throw new Error(`No valid address found for Verus ID: ${verusId}`);
-    } catch (error) {
-        console.error('Error resolving Verus ID:', error);
-        if (error.message.includes('has no matching Script')) {
-            throw new Error(`Invalid destination address format for Verus ID: ${verusId}`);
-        }
-        throw error;
-    }
-}
-
-/**
- * Build and sign a transaction
- * @param {string} fromAddress - Sender address
- * @param {string} toAddress - Recipient address
- * @param {number} amountSat - Amount to send in satoshis
- * @param {string} privateKey - Private key for signing
- * @returns {Promise<Object>} Built transaction
- */
-async function buildAndSignTransaction(fromAddress, toAddress, amountSat, privateKey) {
-    try {
-        // Fetch UTXOs
-        console.log('Fetching UTXOs for address:', fromAddress);
-        const utxos = await fetchUTXOs(fromAddress);
-        console.log('Raw UTXOs:', utxos);
-        console.log('Found UTXOs:', utxos.length);
-
-        // Filter UTXOs for the specified currency (assuming VRSC/VRSCTEST)
-        const relevantUtxos = utxos.filter(utxo => utxo.satoshis > 0);
-        console.log('Relevant UTXOs:', relevantUtxos);
-        console.log('Relevant UTXOs for currency:', relevantUtxos.length);
-
-        if (relevantUtxos.length === 0) {
-            throw new Error(`No UTXOs found for address: ${fromAddress}`);
-        }
-
-        // Create transaction builder
-        const txb = new TransactionBuilder(NETWORK);
-        
-        // Set version for Verus transactions (version 4)
-        txb.setVersion(4);
-        
-        // Add inputs
-        let totalInput = 0;
-        relevantUtxos.forEach(utxo => {
-            txb.addInput(utxo.txid, utxo.vout);
-            totalInput += utxo.satoshis;
-        });
-
-        // Add outputs
-        // Payment output
-        txb.addOutput(toAddress, amountSat);
-
-        // Change output (if needed)
-        const fee = 10000; // 0.0001 VRSC
-        if (totalInput > amountSat + fee) {
-            txb.addOutput(fromAddress, totalInput - amountSat - fee);
-        }
-
-        // Sign inputs
-        const keyPair = ECPair.fromWIF(privateKey, NETWORK);
-        for (let i = 0; i < relevantUtxos.length; i++) {
-            const utxo = relevantUtxos[i];
-            txb.sign(
-                i,
-                keyPair,
-                null,
-                Transaction.SIGHASH_ALL,
-                utxo.satoshis
-            );
-        }
-
-        // Build transaction
-        const tx = txb.build();
-        
-        // For debugging, log the transaction hex
-        console.log('Transaction hex:', tx.toHex());
-        
-        // Verify transaction
-        try {
-            // Check if the transaction is valid
-            tx.ins.forEach((input, i) => {
-                if (!input.script || input.script.length === 0) {
-                    throw new Error(`Input ${i} has no signature script`);
-                }
-            });
-            
-            // Check outputs
-            tx.outs.forEach((output, i) => {
-                if (output.value <= 0) {
-                    throw new Error(`Output ${i} has invalid value: ${output.value}`);
-                }
-            });
-            
-            console.log('Transaction validation passed');
-        } catch (validationError) {
-            console.error('Transaction validation failed:', validationError);
-            throw validationError;
-        }
-        
-        return tx;
-    } catch (error) {
-        console.error('Error building and signing transaction:', error);
-        throw error;
-    }
-}
-
-/**
- * Run the transaction with static values
- * @param {Object} params - Transaction parameters
- * @param {string} params.fromAddress - Address to send from
- * @param {string} params.toAddress - Address to send to
- * @param {number} params.amount - Amount to send
- * @param {string} params.currency - Currency to send
- * @param {string} params.convertTo - Currency to convert to
- * @param {string} params.viaCurrency - Currency to convert via
- * @param {string} params.privateKey - Private key for signing
- * @returns {Promise<void>}
+ * Run a test transaction
  */
 async function runTransaction() {
     try {
-        // First, send a regular transaction
-        const result = await sendCurrency({
-            fromAddress: TEST_ADDRESS,
-            toAddress: TEST_ADDRESS,
-            amount: 1,
-            currency: TEST_CURRENCY,
-            privateKey: TEST_PRIVATE_KEY
-        });
+        console.log('Starting simple transaction test');
         
-        console.log('Transaction Result:', result);
+        // Build and sign the transaction
+        const tx = await buildAndSignTransaction(
+            TEST_ADDRESS,
+            TEST_ADDRESS,
+            0.001, // Small test amount
+            TEST_PRIVATE_KEY
+        );
         
-        // Then, test a conversion transaction
-        const conversionResult = await testConversionTransactionWithUTXO({
-            fromAddress: TEST_ADDRESS,
-            toAddress: TEST_ADDRESS,
-            amount: 1,
-            currency: TEST_CURRENCY,
-            convertTo: TEST_CONVERT_TO,
-            viaCurrency: TEST_VIA_CURRENCY,
-            privateKey: TEST_PRIVATE_KEY
-        });
+        console.log('Transaction built and signed successfully');
         
-        console.log('Transaction sent successfully!');
-        console.log('Transaction ID:', conversionResult.txid);
+        // Broadcast the transaction
+        const txid = await broadcastTransaction(tx.hex);
+        
+        console.log('Transaction completed successfully!');
+        console.log('Transaction ID:', txid);
+        
+        return { txid, hex: tx.hex };
     } catch (error) {
-        console.error('Error running transaction:', error);
+        console.error('Transaction failed:', error);
         throw error;
     }
 }
@@ -648,13 +332,8 @@ runTransaction();
 
 // Export functions for use in other modules
 module.exports = {
-    sendCurrency,
-    sendCurrencyConversionWithUTXO,
-    testConversionTransactionWithUTXO,
+    buildAndSignTransaction,
     fetchUTXOs,
-    addressToScript,
     broadcastTransaction,
-    estimateConversion,
-    resolveVerusId,
-    buildAndSignTransaction
+    runTransaction
 };

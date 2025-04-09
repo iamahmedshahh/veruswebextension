@@ -366,12 +366,30 @@ export default {
             const addresses = store.state.wallet.addresses;
             if (!addresses) return 'Not available';
             
+            console.log('Getting address for currency:', currency, 'Addresses:', addresses);
+            
             // Handle both mainnet and testnet VRSC
             if (currency === 'VRSCTEST' || currency === 'VRSC') {
                 return addresses.VRSC?.address || 'Not available';
             }
             
-            return addresses[currency]?.address || 'Not available';
+            // Handle BTC
+            if (currency === 'BTC') {
+                return addresses.BTC?.address || 'Not available';
+            }
+            
+            // Handle ETH
+            if (currency === 'ETH') {
+                return addresses.ETH?.address || 'Not available';
+            }
+            
+            // For other currencies, try direct lookup
+            if (addresses[currency] && addresses[currency].address) {
+                return addresses[currency].address;
+            }
+            
+            // Fallback to main address if currency-specific address not found
+            return addresses.VRSC?.address || 'Not available';
         };
 
         // Navigation function
@@ -384,6 +402,9 @@ export default {
             try {
                 // First load wallet data
                 await store.dispatch('wallet/loadWalletData');
+                
+                // Initialize network
+                await store.dispatch('network/initialize');
                 
                 // Then initialize currencies module
                 await store.dispatch('currencies/initialize');
@@ -408,6 +429,17 @@ export default {
             }
         });
 
+        // Watch for network changes
+        const currentNetwork = computed(() => store.state.network.currentNetwork);
+        watch(currentNetwork, async (newNetwork, oldNetwork) => {
+            if (newNetwork !== oldNetwork) {
+                console.log(`Network changed from ${oldNetwork} to ${newNetwork}, reinitializing currencies`);
+                // Reinitialize currencies when network changes
+                await store.dispatch('currencies/initialize');
+            }
+        });
+
+        // Generate QR code when receive modal opens
         watch(showReceiveModal, async (isVisible) => {
             if (isVisible && address.value) {
                 try {

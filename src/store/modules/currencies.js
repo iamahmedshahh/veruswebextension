@@ -112,6 +112,9 @@ export default {
             console.log('Initializing currencies module...');
             
             try {
+                const network = rootState.network.currentNetwork;
+                console.log('Current network in initialize:', network);
+                
                 // Load persisted state
                 await dispatch('loadPersistedState');
                 
@@ -119,20 +122,25 @@ export default {
                 await dispatch('fetchAvailableCurrencies');
                 
                 // Load active currencies
-                const network = rootState.network.currentNetwork;
                 const activeCurrencies = await getFromStorages('activeCurrencies', network);
                 if (activeCurrencies && activeCurrencies.length > 0) {
+                    console.log('Found active currencies for network:', network, activeCurrencies);
                     commit('SET_ACTIVE_CURRENCIES', activeCurrencies);
                     commit('SET_SELECTED_CURRENCIES', activeCurrencies);
                 } else {
                     // Set defaults if no active currencies
-                    const defaultCurrencies = network === 'MAINNET' 
-                        ? MAINNET_DEFAULT_CURRENCIES 
-                        : TESTNET_DEFAULT_CURRENCIES;
+                    const defaultCurrencies = network === 'TESTNET' 
+                        ? TESTNET_DEFAULT_CURRENCIES 
+                        : MAINNET_DEFAULT_CURRENCIES;
+                    console.log('Setting default currencies for network:', network, defaultCurrencies);
                     commit('SET_ACTIVE_CURRENCIES', defaultCurrencies);
                     commit('SET_SELECTED_CURRENCIES', defaultCurrencies);
                     await saveToStorages('activeCurrencies', defaultCurrencies, network);
+                    await saveToStorages('selectedCurrencies', defaultCurrencies, network);
                 }
+                
+                // Fetch balances for the selected currencies
+                await dispatch('fetchBalances');
             } catch (error) {
                 console.error('Failed to initialize currencies module:', error);
                 commit('SET_ERROR', 'Failed to initialize currencies');
@@ -142,13 +150,16 @@ export default {
         async loadPersistedState({ commit, rootState }) {
             try {
                 const network = rootState.network.currentNetwork;
+                console.log('Loading persisted state for network:', network);
                 const persistedCurrencies = await getFromStorages('selectedCurrencies', network);
                 
                 if (persistedCurrencies && persistedCurrencies.length > 0) {
+                    console.log('Found persisted currencies:', persistedCurrencies);
                     commit('SET_SELECTED_CURRENCIES', persistedCurrencies);
                 } else {
                     // Use default currencies based on network
-                    const defaultCurrencies = network === 'testnet' ? TESTNET_DEFAULT_CURRENCIES : MAINNET_DEFAULT_CURRENCIES;
+                    const defaultCurrencies = network === 'TESTNET' ? TESTNET_DEFAULT_CURRENCIES : MAINNET_DEFAULT_CURRENCIES;
+                    console.log('Using default currencies for network:', network, defaultCurrencies);
                     commit('SET_SELECTED_CURRENCIES', defaultCurrencies);
                     await saveToStorages('selectedCurrencies', defaultCurrencies, network);
                 }
@@ -165,6 +176,13 @@ export default {
 
         async selectCurrency({ commit, dispatch, state, rootState }, currency) {
             console.log('Selecting currency:', currency);
+            
+            // Check if currency is already selected to prevent duplicates
+            if (state.selectedCurrencies.includes(currency)) {
+                console.log('Currency already selected:', currency);
+                return;
+            }
+            
             const updatedCurrencies = [...state.selectedCurrencies, currency];
             commit('SET_SELECTED_CURRENCIES', updatedCurrencies);
             commit('SET_ACTIVE_CURRENCIES', updatedCurrencies);

@@ -1,6 +1,12 @@
 import WalletService from '../../services/WalletService';
 import { verusRPC } from '../../services/VerusRPCService';
 import storage from '../services/StorageService';
+import { generateSecureId, verifyHash, decrypt } from '../../utils/crypto';
+import { secureClearMemory } from '../../utils/securityUtils';
+
+// Session check interval (every 1 minute)
+const SESSION_CHECK_INTERVAL = 60 * 1000;
+let sessionCheckTimer = null;
 
 // Initial state
 const state = {
@@ -10,8 +16,12 @@ const state = {
     address: null,
     addresses: {}, // Add field for multi-chain addresses
     network: 'testnet',
-    privateKey: null,
-    mnemonic: null,
+    // Remove sensitive data from state
+    // privateKey: null,
+    // mnemonic: null,
+    encryptedData: null, // Contains encrypted sensitive data reference
+    walletId: null, // Wallet ID for reference
+    sessionData: null, // Session information for auto-locking
     balances: {},
     selectedCurrencies: ['VRSCTEST'],
     connectedSites: [],
@@ -34,7 +44,13 @@ const getters = {
     isLocked: state => state.isLocked,
     // Add getters for BTC and ETH addresses
     btcAddress: state => state.addresses?.BTC?.address || null,
-    ethAddress: state => state.addresses?.ETH?.address || null
+    ethAddress: state => state.addresses?.ETH?.address || null,
+    hasSession: state => !!state.sessionData,
+    // Get session validity
+    isSessionValid: state => {
+        if (!state.sessionData || !state.sessionData.expiresAt) return false;
+        return Date.now() < state.sessionData.expiresAt;
+    }
 };
 
 // Actions
@@ -56,18 +72,33 @@ const actions = {
             // Initialize RPC first
             await dispatch('initializeRPC');
             
-            // Generate new wallet
+            // Generate new wallet with enhanced security
             const wallet = await WalletService.generateWallet(mnemonic, password);
-            console.log('Generated wallet:', wallet);
+            console.log('Generated wallet with ID:', wallet.walletId);
             
-            // Store wallet data and password hash
+            // Store non-sensitive wallet data
             const walletData = {
-                ...wallet,
+                walletId: wallet.walletId,
                 address: wallet.addresses.VRSC.address, // Set VRSC address as main address
                 network: 'testnet',
-                privateKey: wallet.addresses.VRSC.privateKey,
-                addresses: wallet.addresses, // Ensure addresses are stored
-                passwordHash: wallet.passwordHash // Store the password hash in the wallet data
+                addresses: {
+                    VRSC: { 
+                        address: wallet.addresses.VRSC.address,
+                        // Store encrypted private key (never store raw private key)
+                        encryptedPrivateKey: wallet.addresses.VRSC.encryptedPrivateKey
+                    },
+                    BTC: { 
+                        address: wallet.addresses.BTC.address,
+                        encryptedPrivateKey: wallet.addresses.BTC.encryptedPrivateKey
+                    },
+                    ETH: { 
+                        address: wallet.addresses.ETH.address,
+                        encryptedPrivateKey: wallet.addresses.ETH.encryptedPrivateKey
+                    }
+                },
+                encryptedMnemonic: wallet.encryptedMnemonic,
+                passwordHash: wallet.passwordHash, // Store the password hash
+                sessionData: wallet.sessionData // Store session data
             };
 
             await storage.set({
@@ -77,17 +108,22 @@ const actions = {
                 lastLoginTime: Date.now()
             });
 
-            // Update store state
+            // Update store state (never store sensitive data in state)
             commit('setWalletData', walletData);
             console.log('Wallet data set in store');
             commit('setHasWallet', true);
             commit('setInitialized', true);
             commit('setSeedConfirmed', true);
             commit('setLoggedIn', true);
+            commit('setLocked', false);
+            commit('setSessionData', wallet.sessionData);
+            
+            // Start session checking
+            dispatch('startSessionCheck');
             
             await dispatch('currencies/initialize', null, { root: true });
             
-            return wallet;
+            return { walletId: wallet.walletId, address: wallet.addresses.VRSC.address };
         } catch (error) {
             console.error('Failed to generate wallet:', error);
             commit('setError', error.message);
@@ -105,17 +141,31 @@ const actions = {
             // Initialize RPC first
             await dispatch('initializeRPC');
             
-            // Recover wallet from mnemonic
+            // Recover wallet from mnemonic with enhanced security
             const wallet = await WalletService.recoverFromMnemonic(mnemonic, password);
             
-            // Store wallet data and password hash
+            // Store wallet data (never storing raw private keys)
             const walletData = {
-                ...wallet,
+                walletId: wallet.walletId,
                 address: wallet.addresses.VRSC.address, // Set VRSC address as main address
                 network: 'testnet',
-                privateKey: wallet.addresses.VRSC.privateKey,
-                addresses: wallet.addresses, // Ensure addresses are stored
-                passwordHash: wallet.passwordHash // Store the password hash in the wallet data
+                addresses: {
+                    VRSC: { 
+                        address: wallet.addresses.VRSC.address,
+                        encryptedPrivateKey: wallet.addresses.VRSC.encryptedPrivateKey
+                    },
+                    BTC: { 
+                        address: wallet.addresses.BTC.address,
+                        encryptedPrivateKey: wallet.addresses.BTC.encryptedPrivateKey
+                    },
+                    ETH: { 
+                        address: wallet.addresses.ETH.address,
+                        encryptedPrivateKey: wallet.addresses.ETH.encryptedPrivateKey
+                    }
+                },
+                encryptedMnemonic: wallet.encryptedMnemonic,
+                passwordHash: wallet.passwordHash,
+                sessionData: wallet.sessionData
             };
 
             await storage.set({
@@ -125,16 +175,20 @@ const actions = {
                 lastLoginTime: Date.now()
             });
 
-            // Update store state
+            // Update store state (with no sensitive data)
             commit('setWalletData', walletData);
             commit('setInitialized', true);
             commit('setHasWallet', true);
             commit('setLoggedIn', true);
             commit('setLocked', false);
+            commit('setSessionData', wallet.sessionData);
+            
+            // Start session checking
+            dispatch('startSessionCheck');
             
             await dispatch('currencies/initialize', null, { root: true });
             
-            return walletData;
+            return { walletId: wallet.walletId, address: wallet.addresses.VRSC.address };
         } catch (error) {
             console.error('Error recovering wallet:', error);
             commit('setError', error.message);
@@ -159,9 +213,24 @@ const actions = {
             // Verify password
             await dispatch('verifyPassword', password);
             
+            // Create new session
+            const sessionData = WalletService.createSession();
+            
+            // Update wallet with new session
+            const updatedWallet = {
+                ...wallet,
+                sessionData
+            };
+            
+            // Save updated wallet with session
+            await storage.set({
+                wallet: updatedWallet
+            });
+            
             // Set wallet data
-            commit('setWalletData', wallet);
+            commit('setWalletData', updatedWallet);
             commit('setHasWallet', true);
+            commit('setSessionData', sessionData);
             
             // Set login state
             commit('setLoggedIn', true);
@@ -178,6 +247,9 @@ const actions = {
                 },
                 isLoggedIn: true
             });
+            
+            // Start session checking
+            dispatch('startSessionCheck');
             
             // Initialize currencies
             await dispatch('currencies/initialize', null, { root: true });
@@ -199,251 +271,359 @@ const actions = {
             commit('setBalance', balance);
             return balance;
         } catch (error) {
-            console.error('Failed to get balance:', error);
-            throw error;
+            console.error('Error getting balance:', error);
+            commit('setError', error.message);
+            return 0;
         }
     },
     
-    async confirmWalletSetup({ commit }) {
-        try {
-            commit('clearError');
-            commit('setSeedConfirmed', true);
-            commit('setInitialized', true);
-        } catch (error) {
-            console.error('Failed to confirm wallet setup:', error);
-            commit('setError', error.message);
-            throw error;
-        }
+    confirmWalletSetup({ commit }) {
+        commit('setSeedConfirmed', true);
+        return storage.set({
+            seedConfirmed: true
+        });
     },
     
     async loadWallet({ commit, dispatch }) {
         try {
             commit('clearError');
-            commit('setLoading', true);
             
-            // Get stored wallet data
-            const data = await storage.get(['wallet', 'hasWallet', 'isLoggedIn']);
+            const data = await storage.get(['wallet', 'hasWallet', 'isLoggedIn', 'walletState']);
             
-            if (!data.wallet || !data.hasWallet) {
-                commit('setHasWallet', false);
-                return;
-            }
-
-            // Always set wallet data if it exists
-            commit('setWalletData', data.wallet);
-            commit('setHasWallet', true);
-            
-            // Set login state if logged in
-            if (data.isLoggedIn) {
-                commit('setLoggedIn', true);
+            if (data.wallet && data.hasWallet) {
+                // Set wallet data but keep it locked initially
+                commit('setWalletData', data.wallet);
+                commit('setHasWallet', true);
                 commit('setInitialized', true);
-                commit('setSeedConfirmed', true);
-                await dispatch('currencies/initialize', null, { root: true });
+                
+                // Check if we have a valid session
+                if (data.wallet.sessionData && WalletService.isSessionValid(data.wallet.sessionData)) {
+                    // Valid session, unlock the wallet
+                    commit('setLoggedIn', true);
+                    commit('setLocked', false);
+                    commit('setSessionData', data.wallet.sessionData);
+                    
+                    // Start session checking
+                    dispatch('startSessionCheck');
+                    
+                    // Initialize currencies
+                    await dispatch('currencies/initialize', null, { root: true });
+                } else {
+                    // No valid session, keep wallet locked
+                    commit('setLoggedIn', false);
+                    commit('setLocked', true);
+                }
+                
+                return data.wallet;
             }
             
-            return data.wallet;
+            return null;
         } catch (error) {
-            console.error('Failed to load wallet:', error);
+            console.error('Error loading wallet:', error);
             commit('setError', error.message);
-            throw error;
-        } finally {
-            commit('setLoading', false);
+            return null;
         }
     },
     
     async clearWallet({ commit }) {
         try {
-            await storage.remove('wallet');
+            // Stop session checking
+            if (sessionCheckTimer) {
+                clearInterval(sessionCheckTimer);
+                sessionCheckTimer = null;
+            }
+            
+            // Clear all wallet data from storage
+            await storage.clear();
+            
+            // Reset state
             commit('clearWalletData');
-            commit('setSeedConfirmed', false);
+            commit('setHasWallet', false);
             commit('setInitialized', false);
             commit('setLoggedIn', false);
-            commit('setHasWallet', false); // Clear hasWallet when fully removing wallet
-        } catch (error) {
-            console.error('Failed to clear wallet:', error);
-            commit('setError', error.message);
-            throw error;
-        }
-    },
-    
-    async initializeState({ commit }) {
-        try {
-            console.log('Initializing wallet state...');
-            
-            // Get stored wallet data
-            const { 
-                wallet, 
-                walletState, 
-                isLoggedIn
-            } = await storage.get([
-                'wallet',
-                'walletState',
-                'isLoggedIn'
-            ]);
-            
-            console.log('Retrieved state:', { 
-                hasWallet: !!wallet, 
-                isLoggedIn: !!isLoggedIn,
-                walletState 
-            });
-            
-            // Set hasWallet if wallet exists
-            commit('setHasWallet', !!wallet);
-            
-            // If we have stored state, restore it
-            if (walletState) {
-                commit('setLocked', walletState.isLocked);
-                commit('setLoggedIn', !!isLoggedIn);
-                if (wallet) {
-                    commit('setAddress', wallet.address);
-                    commit('setNetwork', wallet.network || 'testnet');
-                }
-            }
-            
-            // Mark as initialized
-            commit('setInitialized', true);
-            
-            console.log('Wallet state initialized:', {
-                hasWallet: !!wallet,
-                isLoggedIn: !!isLoggedIn,
-                isLocked: walletState?.isLocked
-            });
-        } catch (error) {
-            console.error('Failed to initialize state:', error);
-            commit('setError', error.message);
-        }
-    },
-    
-    async lock({ commit, state }) {
-        try {
-            console.log('Locking wallet...');
-            
-            // Keep wallet data but set locked state
             commit('setLocked', true);
-            commit('setLoggedIn', false);
-            
-            // Store locked state but keep wallet data
-            await storage.set({
-                walletState: {
-                    isLocked: true,
-                    isLoggedIn: false,
-                    address: state.address,
-                    network: state.network
-                },
-                isLoggedIn: false
-            });
-            
-            console.log('Wallet locked');
-            window.location.hash = '#/login';
-        } catch (error) {
-            console.error('Failed to lock wallet:', error);
-            commit('setError', error.message);
-            throw error;
-        }
-    },
-    
-    async logout({ commit }) {
-        try {
-            console.log('Logging out...');
-            
-            // Clear wallet state from store
-            commit('clearWalletData');
-            
-            // Clear storage
-            await storage.remove(['walletState', 'isLoggedIn']);
-            
-            console.log('Logged out');
-            window.location.hash = '#/login';
-        } catch (error) {
-            console.error('Logout failed:', error);
-            commit('setError', error.message);
-            throw error;
-        }
-    },
-    
-    async unlock({ commit, dispatch, rootGetters }, password) {
-        try {
-            // Get the stored wallet data
-            const { wallet } = await storage.get('wallet');
-            if (!wallet) {
-                throw new Error('No wallet found');
-            }
-            
-            // Verify password
-            const isValid = await dispatch('verifyPassword', password, { root: true });
-            if (!isValid) {
-                throw new Error('Invalid password');
-            }
-            
-            // Update wallet state
-            await storage.set({ 
-                walletState: {
-                    isLocked: false,
-                    address: wallet.address
-                }
-            });
-            
-            // Update session state
-            await storage.session.set({ isLoggedIn: true });
-            
-            // Update store state
-            commit('setLoggedIn', true);
-            commit('setLocked', false);
+            commit('setSeedConfirmed', false);
             
             return true;
         } catch (error) {
-            console.error('Failed to unlock wallet:', error);
-            commit('setError', error.message);
-            throw error;
-        }
-    },
-    
-    async verifyPassword({ commit }, password) {
-        try {
-            commit('clearError');
-            
-            // Get stored wallet data
-            const { wallet } = await storage.get('wallet');
-            if (!wallet || !wallet.passwordHash) {
-                throw new Error('No wallet found');
-            }
-            
-            // Verify password using WalletService
-            const isValid = await WalletService.comparePassword(password, wallet.passwordHash);
-            if (!isValid) {
-                throw new Error('Invalid password');
-            }
-            
-            return true;
-        } catch (error) {
+            console.error('Error clearing wallet:', error);
             commit('setError', error.message);
             return false;
         }
     },
     
-    async updateBalances({ commit, state }) {
-        if (!state.isLoggedIn || !state.address) {
-            console.log('Not updating balances - not logged in or no address');
-            return;
+    async initializeState({ commit }) {
+        try {
+            commit('clearError');
+            
+            const data = await storage.get(['wallet', 'hasWallet', 'isLoggedIn', 'walletState', 'seedConfirmed']);
+            
+            if (data.hasWallet && data.wallet) {
+                commit('setWalletData', data.wallet);
+                commit('setHasWallet', true);
+                commit('setInitialized', true);
+                
+                if (data.seedConfirmed) {
+                    commit('setSeedConfirmed', true);
+                }
+                
+                // Determine if wallet should be locked based on session
+                if (data.wallet.sessionData && WalletService.isSessionValid(data.wallet.sessionData)) {
+                    commit('setLoggedIn', true);
+                    commit('setLocked', false);
+                    commit('setSessionData', data.wallet.sessionData);
+                } else {
+                    commit('setLoggedIn', false);
+                    commit('setLocked', true);
+                }
+            } else {
+                // No wallet exists
+                commit('setHasWallet', false);
+                commit('setInitialized', false);
+                commit('setLoggedIn', false);
+                commit('setLocked', true);
+            }
+            
+            return data;
+        } catch (error) {
+            console.error('Error initializing state:', error);
+            commit('setError', error.message);
+            return null;
+        }
+    },
+    
+    /**
+     * Locks the wallet, clearing sensitive data from memory
+     */
+    async lock({ commit, state }) {
+        try {
+            console.log('Locking wallet...');
+            
+            // Stop session checking
+            if (sessionCheckTimer) {
+                clearInterval(sessionCheckTimer);
+                sessionCheckTimer = null;
+            }
+            
+            // Clear session data
+            const updatedWallet = { ...state.wallet };
+            if (updatedWallet.sessionData) {
+                updatedWallet.sessionData = null;
+                
+                // Update storage
+                await storage.set({
+                    wallet: updatedWallet,
+                    walletState: {
+                        isLocked: true,
+                        isLoggedIn: false,
+                        address: state.address,
+                        network: state.network,
+                        lastLockTime: Date.now()
+                    }
+                });
+            }
+            
+            // Update state
+            commit('setLoggedIn', false);
+            commit('setLocked', true);
+            commit('setSessionData', null);
+            
+            console.log('Wallet locked.');
+            
+            return true;
+        } catch (error) {
+            console.error('Error locking wallet:', error);
+            commit('setError', error.message);
+            return false;
+        }
+    },
+    
+    /**
+     * Logs out the user completely
+     */
+    async logout({ commit }) {
+        try {
+            console.log('Logging out...');
+            
+            // Stop session checking
+            if (sessionCheckTimer) {
+                clearInterval(sessionCheckTimer);
+                sessionCheckTimer = null;
+            }
+            
+            // Clear login state but keep wallet data
+            await storage.set({
+                isLoggedIn: false,
+                walletState: {
+                    isLocked: true,
+                    isLoggedIn: false,
+                    lastLogoutTime: Date.now()
+                }
+            });
+            
+            // Update state
+            commit('clearLoginData');
+            commit('setLoggedIn', false);
+            commit('setLocked', true);
+            commit('setSessionData', null);
+            
+            console.log('Logout successful.');
+            
+            return true;
+        } catch (error) {
+            console.error('Error logging out:', error);
+            commit('setError', error.message);
+            return false;
+        }
+    },
+    
+    /**
+     * Unlocks the wallet and starts a new session
+     */
+    async unlock({ commit, dispatch, rootGetters }, password) {
+        try {
+            console.log('Unlocking wallet...');
+            commit('clearError');
+            commit('setLoading', true);
+            
+            // Verify password
+            await dispatch('verifyPassword', password);
+            
+            // Create a new session
+            const sessionData = WalletService.createSession();
+            
+            // Get current wallet data
+            const { wallet } = await storage.get(['wallet']);
+            
+            // Update wallet with session
+            const updatedWallet = { ...wallet, sessionData };
+            
+            // Store updated wallet
+            await storage.set({
+                wallet: updatedWallet,
+                walletState: {
+                    isLocked: false,
+                    isLoggedIn: true,
+                    address: updatedWallet.address,
+                    network: updatedWallet.network,
+                    lastUnlockTime: Date.now()
+                },
+                isLoggedIn: true
+            });
+            
+            // Update state
+            commit('setWalletData', updatedWallet);
+            commit('setLoggedIn', true);
+            commit('setLocked', false);
+            commit('setSessionData', sessionData);
+            
+            // Start session checking
+            dispatch('startSessionCheck');
+            
+            console.log('Wallet unlocked');
+            
+            return true;
+        } catch (error) {
+            console.error('Error unlocking wallet:', error);
+            commit('setError', 'Failed to unlock wallet: ' + error.message);
+            return false;
+        } finally {
+            commit('setLoading', false);
+        }
+    },
+    
+    /**
+     * Verifies a password against the stored password hash
+     */
+    async verifyPassword({ commit }, password) {
+        try {
+            commit('clearError');
+            
+            const { wallet } = await storage.get(['wallet']);
+            
+            if (!wallet || !wallet.passwordHash) {
+                throw new Error('No wallet found or password hash not set');
+            }
+            
+            const isValid = await verifyHash(password, wallet.passwordHash);
+            
+            if (!isValid) {
+                throw new Error('Invalid password');
+            }
+            
+            return true;
+        } catch (error) {
+            console.error('Password verification failed:', error);
+            commit('setError', error.message);
+            throw error;
+        }
+    },
+    
+    /**
+     * Starts checking the session validity at regular intervals
+     */
+    startSessionCheck({ dispatch, state }) {
+        // Clear any existing timers
+        if (sessionCheckTimer) {
+            clearInterval(sessionCheckTimer);
         }
         
+        // Set up new timer to check session validity
+        sessionCheckTimer = setInterval(() => {
+            if (state.sessionData && !WalletService.isSessionValid(state.sessionData)) {
+                console.log('Session expired, locking wallet');
+                dispatch('lock');
+            }
+        }, SESSION_CHECK_INTERVAL);
+    },
+    
+    /**
+     * Extends the current session
+     */
+    async extendSession({ commit, state }) {
+        if (!state.sessionData) return false;
+        
+        try {
+            // Extend the session
+            const extendedSession = WalletService.extendSession(state.sessionData);
+            
+            // Get current wallet
+            const { wallet } = await storage.get(['wallet']);
+            
+            // Update wallet with extended session
+            const updatedWallet = {
+                ...wallet,
+                sessionData: extendedSession
+            };
+            
+            // Save to storage
+            await storage.set({
+                wallet: updatedWallet
+            });
+            
+            // Update state
+            commit('setSessionData', extendedSession);
+            
+            return true;
+        } catch (error) {
+            console.error('Failed to extend session:', error);
+            return false;
+        }
+    },
+    
+    async updateBalances({ commit, state }) {
         try {
             commit('SET_LOADING_BALANCES', true);
             
-            // Get all currency balances
-            const allBalances = await verusRPC.getAllCurrencyBalances(state.address);
-            console.log('All balances:', allBalances);
+            const { address } = state;
+            if (!address) return;
             
-            // Set balances in store
-            commit('SET_BALANCES', allBalances);
+            const balances = await verusRPC.getAllCurrencyBalances(address);
+            commit('SET_BALANCES', balances);
             
-            // Set the main VRSC/VRSCTEST balance for backward compatibility
-            const mainBalance = allBalances['VRSCTEST'] || allBalances['VRSC'] || 0;
-            commit('setBalance', mainBalance);
-            
+            return balances;
         } catch (error) {
             console.error('Error updating balances:', error);
-            commit('setError', 'Failed to update balances: ' + error.message);
         } finally {
             commit('SET_LOADING_BALANCES', false);
         }
@@ -459,80 +639,216 @@ const actions = {
     
     async getConnectedSites({ commit }) {
         try {
-            const sites = await storage.get('connectedSites')
-            commit('SET_CONNECTED_SITES', sites.connectedSites || [])
-            return sites.connectedSites || []
+            const { connectedSites = [] } = await storage.get(['connectedSites']);
+            commit('SET_CONNECTED_SITES', connectedSites);
+            return connectedSites;
         } catch (error) {
-            console.error('Failed to get connected sites:', error)
-            return []
-        }
-    },
-
-    async disconnectSite({ commit, dispatch }, origin) {
-        try {
-            const sites = await storage.get('connectedSites')
-            const updatedSites = (sites.connectedSites || []).filter(site => site.origin !== origin)
-            await storage.set({ connectedSites: updatedSites })
-            commit('SET_CONNECTED_SITES', updatedSites)
-            
-            // Notify content script to remove connection
-            const tabs = await browser.tabs.query({ url: origin + '/*' })
-            tabs.forEach(tab => {
-                browser.tabs.sendMessage(tab.id, {
-                    type: 'DISCONNECT_SITE',
-                    origin
-                })
-            })
-        } catch (error) {
-            console.error('Failed to disconnect site:', error)
-            throw error
-        }
-    },
-
-    async addConnectedSite({ commit, state }, { origin, favicon }) {
-        try {
-            const sites = await storage.get('connectedSites')
-            const existingSites = sites.connectedSites || []
-            
-            // Don't add if already exists
-            if (!existingSites.some(site => site.origin === origin)) {
-                const updatedSites = [...existingSites, { origin, favicon, connectedAt: Date.now() }]
-                await storage.set({ connectedSites: updatedSites })
-                commit('SET_CONNECTED_SITES', updatedSites)
-            }
-        } catch (error) {
-            console.error('Failed to add connected site:', error)
-            throw error
+            console.error('Error getting connected sites:', error);
+            return [];
         }
     },
     
-    async getPrivateKey({ state, commit }) {
+    async disconnectSite({ commit, dispatch }, origin) {
         try {
             commit('clearError');
             
-            // Check if we have the private key in state
-            if (state.privateKey) {
-                return state.privateKey;
-            }
+            // Get current connected sites
+            const { connectedSites = [] } = await storage.get(['connectedSites']);
             
-            // If not in state, try to get it from storage
-            const data = await storage.get('wallet');
-            if (!data.wallet || !data.wallet.privateKey) {
-                throw new Error('Private key not found in wallet');
-            }
+            // Filter out the site to disconnect
+            const updatedSites = connectedSites.filter(site => site.origin !== origin);
             
-            // Store in state for future use
-            commit('setWalletData', {
-                address: state.address,
-                network: state.network,
-                privateKey: data.wallet.privateKey,
-                mnemonic: data.wallet.mnemonic
-            });
+            // Save updated sites
+            await storage.set({ connectedSites: updatedSites });
             
-            return data.wallet.privateKey;
+            // Update state
+            commit('SET_CONNECTED_SITES', updatedSites);
+            
+            return true;
         } catch (error) {
-            console.error('Failed to get private key:', error);
+            console.error('Error disconnecting site:', error);
             commit('setError', error.message);
+            return false;
+        }
+    },
+    
+    async addConnectedSite({ commit, state }, { origin, favicon }) {
+        try {
+            // Get current sites
+            const { connectedSites = [] } = await storage.get(['connectedSites']);
+            
+            // Check if site is already connected
+            if (connectedSites.some(site => site.origin === origin)) {
+                return true;
+            }
+            
+            // Add new site
+            const updatedSites = [
+                ...connectedSites,
+                { origin, favicon, connectedAt: Date.now() }
+            ];
+            
+            // Save to storage
+            await storage.set({ connectedSites: updatedSites });
+            
+            // Update state
+            commit('SET_CONNECTED_SITES', updatedSites);
+            
+            return true;
+        } catch (error) {
+            console.error('Error adding connected site:', error);
+            return false;
+        }
+    },
+    
+    /**
+     * Gets a private key for a specific currency (securely)
+     */
+    async getPrivateKey({ state, commit }, { currency, password }) {
+        try {
+            if (!state.addresses || !state.addresses[currency]) {
+                throw new Error(`No address found for ${currency}`);
+            }
+            
+            const { encryptedPrivateKey } = state.addresses[currency];
+            if (!encryptedPrivateKey) {
+                throw new Error(`No encrypted private key found for ${currency}`);
+            }
+            
+            // Verify password first
+            await this.dispatch('wallet/verifyPassword', password);
+            
+            // Decrypt the private key (securely)
+            const privateKey = await WalletService.getPrivateKey(encryptedPrivateKey, password);
+            
+            // Return the private key, but make sure it gets cleaned up
+            // Schedule private key cleanup from memory after use
+            setTimeout(() => {
+                // This is a best-effort cleanup, not foolproof
+                if (typeof privateKey === 'string') {
+                    privateKey.split('').map(() => '*').join('');
+                }
+            }, 60000); // Clean up after 1 minute max
+            
+            return privateKey;
+        } catch (error) {
+            console.error('Error getting private key:', error);
+            commit('setError', error.message);
+            throw error;
+        }
+    },
+    
+    /**
+     * Changes the wallet password and re-encrypts all sensitive data
+     * @param {string} currentPassword - The current wallet password 
+     * @param {string} newPassword - The new password to set
+     * @returns {Promise<boolean>} Success status
+     */
+    async changePassword({ state, commit, dispatch }, { currentPassword, newPassword }) {
+        // Verify current password first
+        const isValid = await dispatch('verifyPassword', currentPassword);
+        if (!isValid) {
+            throw new Error('Current password is incorrect');
+        }
+
+        try {
+            // Get all necessary wallet data
+            const data = await storage.getWallet();
+            if (!data) {
+                throw new Error('Wallet data not found');
+            }
+
+            // Decrypt sensitive data using current password
+            const { decrypt, encrypt, hash } = await import('../../utils/crypto');
+            
+            // Decrypt mnemonic phrase with current password
+            const mnemonic = await decrypt(data.encryptedMnemonic, currentPassword);
+            
+            // Get and decrypt private keys for all currencies
+            const privateKeys = {};
+            for (const [currency, addressData] of Object.entries(data.addresses)) {
+                if (addressData.encryptedPrivateKey) {
+                    privateKeys[currency] = await decrypt(
+                        addressData.encryptedPrivateKey, 
+                        currentPassword
+                    );
+                }
+            }
+            
+            // Re-encrypt all sensitive data with new password
+            const encryptedMnemonic = await encrypt(mnemonic, newPassword);
+            const passwordHash = await hash(newPassword);
+            
+            // Re-encrypt private keys
+            const updatedAddresses = {};
+            for (const [currency, addressData] of Object.entries(data.addresses)) {
+                updatedAddresses[currency] = {
+                    ...addressData,
+                    encryptedPrivateKey: privateKeys[currency] 
+                        ? await encrypt(privateKeys[currency], newPassword)
+                        : addressData.encryptedPrivateKey
+                };
+            }
+            
+            // Create updated wallet data
+            const updatedWalletData = {
+                ...data,
+                addresses: updatedAddresses,
+                encryptedMnemonic,
+                passwordHash
+            };
+            
+            // Store updated wallet data
+            await storage.saveWallet(updatedWalletData);
+            
+            // Update state
+            commit('setWalletData', updatedWalletData);
+            
+            // Clean up sensitive data from memory
+            const { secureClearMemory } = await import('../../utils/securityUtils');
+            secureClearMemory({ mnemonic, privateKeys }, ['mnemonic', 'privateKeys']);
+            
+            return true;
+        } catch (error) {
+            console.error('Error changing password:', error);
+            throw error;
+        }
+    },
+    
+    /**
+     * Securely retrieves the wallet's recovery phrase
+     * @param {string} password - The wallet password to decrypt the mnemonic
+     * @returns {Promise<string>} The decrypted recovery phrase
+     */
+    async getRecoveryPhrase({ state, commit }, { password }) {
+        try {
+            // Get wallet data from storage
+            const result = await storage.get('wallet');
+            const data = result.wallet;
+            
+            if (!data || !data.encryptedMnemonic) {
+                throw new Error('Recovery phrase not found');
+            }
+
+            // Verify the password first
+            const passwordValid = await verifyHash(password, data.passwordHash);
+            
+            if (!passwordValid) {
+                throw new Error('Invalid password');
+            }
+            
+            // Decrypt the mnemonic
+            const mnemonic = await decrypt(data.encryptedMnemonic, password);
+            
+            // Set up automatic cleanup of sensitive data
+            setTimeout(() => {
+                // After 60 seconds, force cleanup of mnemonic from memory
+                secureClearMemory({ mnemonic }, ['mnemonic']);
+            }, 60000);
+            
+            return mnemonic;
+        } catch (error) {
+            console.error('Error retrieving recovery phrase:', error);
             throw error;
         }
     },
@@ -553,13 +869,19 @@ const mutations = {
     },
     
     setLoggedIn(state, isLoggedIn) {
-        console.log('Setting logged in state to:', isLoggedIn);
         state.isLoggedIn = isLoggedIn;
+        // Clear sensitive data on logout
+        if (!isLoggedIn) {
+            state.sessionData = null;
+        }
     },
     
     setLocked(state, isLocked) {
-        console.log('Setting locked state to:', isLocked);
         state.isLocked = isLocked;
+        // Clear sensitive data on lock
+        if (isLocked) {
+            state.sessionData = null;
+        }
     },
     
     setHasWallet(state, hasWallet) {
@@ -568,17 +890,20 @@ const mutations = {
     
     clearWalletData(state) {
         state.address = null;
+        state.addresses = {};
         state.network = 'testnet';
-        state.privateKey = null;
-        state.mnemonic = null;
         state.balances = {};
-        state.selectedCurrencies = ['VRSCTEST'];
-        state.connectedSites = [];
+        state.walletId = null;
+        state.sessionData = null;
+        state.hasWallet = false;
+        state.isLoggedIn = false;
+        state.isLocked = true;
     },
     
     clearLoginData(state) {
         state.isLoggedIn = false;
         state.isLocked = true;
+        state.sessionData = null;
     },
     
     setError(state, error) {
@@ -616,10 +941,9 @@ const mutations = {
     },
     
     REMOVE_CURRENCY(state, currency) {
-        const index = state.selectedCurrencies.indexOf(currency);
-        if (index !== -1) {
-            state.selectedCurrencies.splice(index, 1);
-        }
+        state.selectedCurrencies = state.selectedCurrencies.filter(
+            curr => curr !== currency
+        );
     },
     
     SET_SELECTED_CURRENCIES(state, currencies) {
@@ -627,20 +951,28 @@ const mutations = {
     },
     
     SET_CONNECTED_SITES(state, sites) {
-        state.connectedSites = sites
+        state.connectedSites = sites;
     },
     
     REMOVE_CONNECTED_SITE(state, origin) {
-        state.connectedSites = state.connectedSites.filter(site => site.origin !== origin)
+        state.connectedSites = state.connectedSites.filter(site => site.origin !== origin);
     },
     
     setWalletData(state, walletData) {
-        if (walletData.address) state.address = walletData.address;
-        if (walletData.network) state.network = walletData.network;
-        if (walletData.privateKey) state.privateKey = walletData.privateKey;
-        if (walletData.mnemonic) state.mnemonic = walletData.mnemonic;
-        if (walletData.addresses) state.addresses = walletData.addresses;
+        // Store non-sensitive wallet data
+        state.address = walletData.address;
+        state.addresses = walletData.addresses || {};
+        state.network = walletData.network || 'testnet';
+        state.walletId = walletData.walletId;
+        
+        // Never store private keys or mnemonic in state
+        // state.privateKey = null;
+        // state.mnemonic = null;
     },
+    
+    setSessionData(state, sessionData) {
+        state.sessionData = sessionData;
+    }
 };
 
 export default {

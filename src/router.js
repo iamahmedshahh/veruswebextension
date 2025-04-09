@@ -7,6 +7,7 @@ import CurrencyDetails from './components/CurrencyDetails.vue';
 import Login from './components/Login.vue';
 import TransactionApproval from './components/TransactionApproval.vue';
 import PreconvertApproval from './popup/PreconvertApproval.vue';
+import SecuritySettings from './components/SecuritySettings.vue';
 import store from './store';
 
 const routes = [
@@ -69,6 +70,12 @@ const routes = [
     name: 'currency-details',
     component: CurrencyDetails,
     props: true,
+    meta: { requiresAuth: true }
+  },
+  {
+    path: '/security',
+    name: 'security-settings',
+    component: SecuritySettings,
     meta: { requiresAuth: true }
   }
 ];

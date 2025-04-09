@@ -260,11 +260,18 @@ async function generateQRCode(type) {
 
 const onNetworkChange = async (event) => {
   try {
-    await store.dispatch('network/changeNetwork', event.target.value)
+    console.log('Changing network to:', selectedNetwork.value)
+    
+    // Clear any currency-specific data in storage first
+    localStorage.removeItem(`selectedCurrencies_${selectedNetwork.value}`)
+    localStorage.removeItem(`activeCurrencies_${selectedNetwork.value}`)
+    
+    // Then change the network
+    await store.dispatch('network/changeNetwork', selectedNetwork.value)
+    
+    // Page will reload automatically from the action
   } catch (error) {
     console.error('Failed to change network:', error)
-    // Revert the selection
-    event.target.value = store.getters['network/currentNetwork']
   }
 }
 </script>

@@ -90,28 +90,83 @@
 
       <div v-if="newWalletStep === 3" class="password-setup">
         <h2>Create Password</h2>
-        <p>Create a password to secure your wallet</p>
+        <p>Create a strong password to secure your wallet</p>
 
         <div class="form-group">
           <label>Password</label>
-          <input 
-            type="password"
-            v-model="password"
-            :disabled="loading"
-            placeholder="Enter password"
-            class="password-input"
-          >
+          <div class="password-input-container">
+            <input 
+              :type="showPassword ? 'text' : 'password'"
+              v-model="password"
+              :disabled="loading"
+              placeholder="Enter password"
+              class="password-input"
+              @input="checkPasswordStrength"
+              autocomplete="new-password"
+            >
+            <button 
+              type="button" 
+              class="toggle-password" 
+              @click="showPassword = !showPassword"
+              :title="showPassword ? 'Hide password' : 'Show password'"
+            >
+              <span v-if="showPassword">👁️</span>
+              <span v-else>👁️‍🗨️</span>
+            </button>
+          </div>
+          <div class="password-strength-meter">
+            <div 
+              class="password-strength-bar" 
+              :class="passwordStrengthClass"
+              :style="{ width: passwordStrength + '%' }"
+            ></div>
+          </div>
+          <div class="password-strength-text" :class="passwordStrengthClass">
+            {{ passwordStrengthText }}
+          </div>
+          <div class="password-requirements">
+            <p>Your password must contain:</p>
+            <ul>
+              <li :class="{ 'requirement-met': passwordHasMinLength }">
+                At least 12 characters
+              </li>
+              <li :class="{ 'requirement-met': passwordHasUppercase }">
+                At least one uppercase letter
+              </li>
+              <li :class="{ 'requirement-met': passwordHasLowercase }">
+                At least one lowercase letter
+              </li>
+              <li :class="{ 'requirement-met': passwordHasNumber }">
+                At least one number
+              </li>
+              <li :class="{ 'requirement-met': passwordHasSpecial }">
+                At least one special character
+              </li>
+            </ul>
+          </div>
         </div>
 
         <div class="form-group">
           <label>Confirm Password</label>
-          <input 
-            type="password"
-            v-model="confirmPassword"
-            :disabled="loading"
-            placeholder="Confirm password"
-            class="password-input"
-          >
+          <div class="password-input-container">
+            <input 
+              :type="showConfirmPassword ? 'text' : 'password'"
+              v-model="confirmPassword"
+              :disabled="loading"
+              placeholder="Confirm password"
+              class="password-input"
+              autocomplete="new-password"
+            >
+            <button 
+              type="button" 
+              class="toggle-password" 
+              @click="showConfirmPassword = !showConfirmPassword"
+              :title="showConfirmPassword ? 'Hide password' : 'Show password'"
+            >
+              <span v-if="showConfirmPassword">👁️</span>
+              <span v-else>👁️‍🗨️</span>
+            </button>
+          </div>
         </div>
 
         <div v-if="passwordError" class="error-message">
@@ -155,24 +210,79 @@
       <div v-if="isValidMnemonic" class="password-setup">
         <div class="form-group">
           <label>Create Password</label>
-          <input 
-            type="password"
-            v-model="password"
-            :disabled="loading"
-            placeholder="Enter password"
-            class="password-input"
-          >
+          <div class="password-input-container">
+            <input 
+              :type="showPassword ? 'text' : 'password'"
+              v-model="password"
+              :disabled="loading"
+              placeholder="Enter password"
+              class="password-input"
+              @input="checkPasswordStrength"
+              autocomplete="new-password"
+            >
+            <button 
+              type="button" 
+              class="toggle-password" 
+              @click="showPassword = !showPassword"
+              :title="showPassword ? 'Hide password' : 'Show password'"
+            >
+              <span v-if="showPassword">👁️</span>
+              <span v-else>👁️‍🗨️</span>
+            </button>
+          </div>
+          <div class="password-strength-meter">
+            <div 
+              class="password-strength-bar" 
+              :class="passwordStrengthClass"
+              :style="{ width: passwordStrength + '%' }"
+            ></div>
+          </div>
+          <div class="password-strength-text" :class="passwordStrengthClass">
+            {{ passwordStrengthText }}
+          </div>
+          <div class="password-requirements">
+            <p>Your password must contain:</p>
+            <ul>
+              <li :class="{ 'requirement-met': passwordHasMinLength }">
+                At least 12 characters
+              </li>
+              <li :class="{ 'requirement-met': passwordHasUppercase }">
+                At least one uppercase letter
+              </li>
+              <li :class="{ 'requirement-met': passwordHasLowercase }">
+                At least one lowercase letter
+              </li>
+              <li :class="{ 'requirement-met': passwordHasNumber }">
+                At least one number
+              </li>
+              <li :class="{ 'requirement-met': passwordHasSpecial }">
+                At least one special character
+              </li>
+            </ul>
+          </div>
         </div>
 
         <div class="form-group">
           <label>Confirm Password</label>
-          <input 
-            type="password"
-            v-model="confirmPassword"
-            :disabled="loading"
-            placeholder="Confirm password"
-            class="password-input"
-          >
+          <div class="password-input-container">
+            <input 
+              :type="showConfirmPassword ? 'text' : 'password'"
+              v-model="confirmPassword"
+              :disabled="loading"
+              placeholder="Confirm password"
+              class="password-input"
+              autocomplete="new-password"
+            >
+            <button 
+              type="button" 
+              class="toggle-password" 
+              @click="showConfirmPassword = !showConfirmPassword"
+              :title="showConfirmPassword ? 'Hide password' : 'Show password'"
+            >
+              <span v-if="showConfirmPassword">👁️</span>
+              <span v-else>👁️‍🗨️</span>
+            </button>
+          </div>
         </div>
 
         <div v-if="passwordError" class="error-message">
@@ -210,7 +320,7 @@
 </template>
 
 <script>
-import { ref, computed } from 'vue';
+import { ref, computed, watch, onBeforeUnmount } from 'vue';
 import { useStore } from 'vuex';
 import { useRouter } from 'vue-router';
 import bip39 from 'bip39';
@@ -235,6 +345,46 @@ export default {
     const password = ref('');
     const confirmPassword = ref('');
     const passwordError = ref('');
+    const showPassword = ref(false);
+    const showConfirmPassword = ref(false);
+    const passwordStrength = ref(0);
+    const passwordStrengthText = ref('');
+
+    // Password requirements flags
+    const passwordHasMinLength = ref(false);
+    const passwordHasUppercase = ref(false);
+    const passwordHasLowercase = ref(false);
+    const passwordHasNumber = ref(false);
+    const passwordHasSpecial = ref(false);
+
+    // CSS classes for password strength display
+    const passwordStrengthClass = computed(() => {
+      if (passwordStrength.value < 20) return 'strength-very-weak';
+      if (passwordStrength.value < 40) return 'strength-weak';
+      if (passwordStrength.value < 60) return 'strength-medium';
+      if (passwordStrength.value < 80) return 'strength-good';
+      return 'strength-strong';
+    });
+
+    // Clean up sensitive data when component is unmounted
+    const clearSensitiveData = () => {
+      // Explicitly overwrite with zeros
+      if (seedPhrase.value) seedPhrase.value = '0'.repeat(seedPhrase.value.length);
+      if (mnemonic.value) mnemonic.value = '0'.repeat(mnemonic.value.length);
+      if (password.value) password.value = '0'.repeat(password.value.length);
+      if (confirmPassword.value) confirmPassword.value = '0'.repeat(confirmPassword.value.length);
+      
+      // Then set to empty
+      setTimeout(() => {
+        seedPhrase.value = '';
+        mnemonic.value = '';
+        password.value = '';
+        confirmPassword.value = '';
+        confirmationWords.value = ['', '', '', ''];
+      }, 10);
+    };
+
+    onBeforeUnmount(clearSensitiveData);
 
     const isValidMnemonic = computed(() => {
       return bip39.validateMnemonic(mnemonic.value);
@@ -251,17 +401,84 @@ export default {
       });
     });
 
+    // Check password strength and set requirements flags
+    const checkPasswordStrength = () => {
+      passwordHasMinLength.value = password.value.length >= 12;
+      passwordHasUppercase.value = /[A-Z]/.test(password.value);
+      passwordHasLowercase.value = /[a-z]/.test(password.value);
+      passwordHasNumber.value = /[0-9]/.test(password.value);
+      passwordHasSpecial.value = /[^A-Za-z0-9]/.test(password.value);
+
+      let strength = 0;
+      
+      // Length contributes up to 25%
+      strength += Math.min(password.value.length * 2, 25);
+      
+      // Each character type contributes 15%
+      if (passwordHasUppercase.value) strength += 15;
+      if (passwordHasLowercase.value) strength += 15;
+      if (passwordHasNumber.value) strength += 15;
+      if (passwordHasSpecial.value) strength += 15;
+      
+      // Entropy bonus for longer passwords up to 15%
+      if (password.value.length > 14) strength += Math.min((password.value.length - 14) * 2, 15);
+      
+      passwordStrength.value = Math.min(strength, 100);
+      
+      // Set descriptive text based on strength
+      if (passwordStrength.value < 20) {
+        passwordStrengthText.value = 'Very Weak';
+      } else if (passwordStrength.value < 40) {
+        passwordStrengthText.value = 'Weak';
+      } else if (passwordStrength.value < 60) {
+        passwordStrengthText.value = 'Medium';
+      } else if (passwordStrength.value < 80) {
+        passwordStrengthText.value = 'Good';
+      } else {
+        passwordStrengthText.value = 'Strong';
+      }
+    };
+
+    // Check if password meets all requirements
     const isPasswordValid = computed(() => {
-      if (password.value.length < 8) {
-        passwordError.value = 'Password must be at least 8 characters';
+      if (!passwordHasMinLength.value) {
+        passwordError.value = 'Password must be at least 12 characters';
+        return false;
+      }
+      if (!passwordHasUppercase.value) {
+        passwordError.value = 'Password must contain at least one uppercase letter';
+        return false;
+      }
+      if (!passwordHasLowercase.value) {
+        passwordError.value = 'Password must contain at least one lowercase letter';
+        return false;
+      }
+      if (!passwordHasNumber.value) {
+        passwordError.value = 'Password must contain at least one number';
+        return false;
+      }
+      if (!passwordHasSpecial.value) {
+        passwordError.value = 'Password must contain at least one special character';
         return false;
       }
       if (password.value !== confirmPassword.value) {
         passwordError.value = 'Passwords do not match';
         return false;
       }
+      
+      // Ensure overall strength is at least medium
+      if (passwordStrength.value < 60) {
+        passwordError.value = 'Please choose a stronger password';
+        return false;
+      }
+      
       passwordError.value = '';
       return true;
+    });
+
+    // Watch for password changes to update strength in real-time
+    watch(password, () => {
+      checkPasswordStrength();
     });
 
     function generateConfirmationIndices() {
@@ -340,6 +557,9 @@ export default {
           password: password.value
         });
 
+        // Clean up sensitive data from memory
+        clearSensitiveData();
+
         // Navigate to dashboard after successful creation
         router.push('/');
       } catch (err) {
@@ -364,6 +584,9 @@ export default {
           password: password.value
         });
 
+        // Clean up sensitive data from memory
+        clearSensitiveData();
+
         // Navigate to dashboard after successful import
         router.push('/');
       } catch (err) {
@@ -375,9 +598,10 @@ export default {
 
     function cancelImport() {
       showMnemonicInput.value = false;
-      mnemonic.value = '';
-      password.value = '';
-      confirmPassword.value = '';
+      
+      // Clean up sensitive data
+      clearSensitiveData();
+      
       passwordError.value = '';
     }
 
@@ -399,6 +623,16 @@ export default {
       password,
       confirmPassword,
       passwordError,
+      showPassword,
+      showConfirmPassword,
+      passwordStrength,
+      passwordStrengthText,
+      passwordStrengthClass,
+      passwordHasMinLength,
+      passwordHasUppercase,
+      passwordHasLowercase,
+      passwordHasNumber,
+      passwordHasSpecial,
       startNewWalletFlow,
       proceedToConfirmation,
       validateConfirmation,
@@ -406,7 +640,8 @@ export default {
       goBackInSetup,
       finalizeWalletCreation,
       importWallet,
-      cancelImport
+      cancelImport,
+      checkPasswordStrength
     };
   }
 };
@@ -638,18 +873,111 @@ h1, h2 {
   margin-bottom: 1rem;
 }
 
-.password-setup {
-  margin-top: 1.5rem;
+.password-input-container {
+  position: relative;
+  display: flex;
+  align-items: center;
 }
 
-.form-group {
-  margin-bottom: 1.5rem;
+.password-input {
+  flex: 1;
+  padding-right: 40px;
 }
 
-.form-group label {
-  display: block;
-  margin-bottom: 0.5rem;
-  font-weight: 500;
+.toggle-password {
+  position: absolute;
+  right: 8px;
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  font-size: 1.2rem;
+  color: var(--text-color);
+  opacity: 0.7;
+  padding: 5px;
+}
+
+.toggle-password:hover {
+  opacity: 1;
+}
+
+.password-strength-meter {
+  width: 100%;
+  height: 5px;
+  background-color: #e0e0e0;
+  border-radius: 3px;
+  margin-top: 8px;
+  overflow: hidden;
+}
+
+.password-strength-bar {
+  height: 100%;
+  transition: width 0.3s;
+}
+
+.password-strength-text {
+  font-size: 0.8rem;
+  margin-top: 4px;
+  text-align: right;
+}
+
+.strength-very-weak {
+  background-color: #ff4d4d;
+  color: #ff4d4d;
+}
+
+.strength-weak {
+  background-color: #ffa64d;
+  color: #ffa64d;
+}
+
+.strength-medium {
+  background-color: #ffff4d;
+  color: #b3b300;
+}
+
+.strength-good {
+  background-color: #4dff4d;
+  color: #33cc33;
+}
+
+.strength-strong {
+  background-color: #4db8ff;
+  color: #4db8ff;
+}
+
+.password-requirements {
+  margin-top: 12px;
+  font-size: 0.8rem;
+  background-color: rgba(0, 0, 0, 0.05);
+  padding: 10px;
+  border-radius: 5px;
+}
+
+.password-requirements p {
+  margin-bottom: 5px;
+  font-weight: bold;
+}
+
+.password-requirements ul {
+  padding-left: 20px;
+  margin: 0;
+}
+
+.password-requirements li {
+  margin-bottom: 3px;
+  color: var(--text-color);
+  opacity: 0.7;
+}
+
+.requirement-met {
+  color: var(--success-color, #33cc33) !important;
+  opacity: 1 !important;
+}
+
+.error-message {
+  color: var(--error-color);
+  margin: 0.5rem 0;
+  font-size: 0.875rem;
 }
 
 .button-group {
