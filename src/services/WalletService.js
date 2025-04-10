@@ -110,22 +110,25 @@ async function deriveWeb3Keypair(seed) {
 
 export default class WalletService {
     /**
-     * Creates a secure hash of the user's password with bcrypt
+     * Creates a secure hash of the user's password
      * @param {string} password - The user's password to hash
-     * @returns {Promise<string>} - Bcrypt hash of the password
+     * @returns {Promise<Object>} - Hash and salt for the password
      */
     static async hashPassword(password) {
-        return bcrypt.hash(password, 12); // Increased from 10 rounds
+        // Use the crypto utility function for consistency
+        return hashPassword(password);
     }
 
     /**
-     * Compares a password against a bcrypt hash
+     * Compares a password against a stored hash
      * @param {string} password - The password to check
-     * @param {string} hash - The bcrypt hash to compare against
+     * @param {string} hash - The hash to compare against
+     * @param {Buffer} salt - The salt used for hashing
      * @returns {Promise<boolean>} - Whether the password matches
      */
-    static async comparePassword(password, hash) {
-        return bcrypt.compare(password, hash);
+    static async comparePassword(password, hash, salt) {
+        // Use the crypto utility function for consistency
+        return verifyPassword(password, hash, salt);
     }
 
     /**
@@ -196,7 +199,10 @@ export default class WalletService {
             };
 
             // Hash password for authentication (not for encryption)
-            const passwordHash = await this.hashPassword(password);
+            const { hash: passwordHash, salt: passwordSalt } = await this.hashPassword(password);
+            
+            // Convert the passwordSalt Buffer to hex string for storage
+            const passwordSaltHex = passwordSalt.toString('hex');
 
             // Clear sensitive data from memory
             // Clear the mnemonic from memory
@@ -218,6 +224,7 @@ export default class WalletService {
                 encryptedMnemonic,
                 addresses,
                 passwordHash,
+                passwordSalt: passwordSaltHex,
                 sessionData
             };
         } catch (error) {
@@ -233,7 +240,73 @@ export default class WalletService {
      * @returns {Promise<object>} - Recovered wallet data
      */
     static async recoverFromMnemonic(mnemonic, password) {
-        return this.generateWallet(mnemonic, password);
+        try {
+            // Validate mnemonic
+            if (!bip39.validateMnemonic(mnemonic)) {
+                throw new Error('Invalid mnemonic');
+            }
+
+            // Use the same key derivation approach as generateWallet
+            const vrscKeys = seedToWif(mnemonic, VERUS_NETWORK, true);
+            const btcKeys = seedToWif(mnemonic, NETWORK_CONFIG.bitcoin, true);
+            const ethKeys = await deriveWeb3Keypair(mnemonic);
+
+            // Encrypt sensitive data
+            const encryptedMnemonic = await encrypt(mnemonic, password);
+            const vrscPrivateKeyEncrypted = await encrypt(vrscKeys.priv, password);
+            const btcPrivateKeyEncrypted = await encrypt(btcKeys.priv, password);
+            const ethPrivateKeyEncrypted = await encrypt(ethKeys.privKey, password);
+
+            // Create wallet ID for secure reference
+            const walletId = generateSecureId();
+
+            // Store addresses only, with encrypted private keys
+            const addresses = {
+                VRSC: {
+                    address: vrscKeys.pub,
+                    encryptedPrivateKey: vrscPrivateKeyEncrypted,
+                },
+                BTC: {
+                    address: btcKeys.pub,
+                    encryptedPrivateKey: btcPrivateKeyEncrypted,
+                },
+                ETH: {
+                    address: ethKeys.address,
+                    encryptedPrivateKey: ethPrivateKeyEncrypted,
+                }
+            };
+
+            // Hash password for authentication
+            const { hash: passwordHash, salt: passwordSalt } = await this.hashPassword(password);
+            
+            // Convert the passwordSalt Buffer to hex string for storage
+            const passwordSaltHex = passwordSalt.toString('hex');
+
+            // Clear sensitive data from memory
+            if (typeof mnemonic === 'string') {
+                mnemonic = mnemonic.split('').map(() => '*').join('');
+                mnemonic = null;
+            }
+
+            // Create session data with timeout
+            const sessionData = {
+                createdAt: Date.now(),
+                expiresAt: Date.now() + MAX_SESSION_TIME,
+                id: generateSecureId()
+            };
+
+            return {
+                walletId,
+                encryptedMnemonic,
+                addresses,
+                passwordHash,
+                passwordSalt: passwordSaltHex,
+                sessionData
+            };
+        } catch (error) {
+            console.error('Wallet recovery failed:', error);
+            throw error;
+        }
     }
 
     /**

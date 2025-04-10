@@ -98,6 +98,7 @@ const actions = {
                 },
                 encryptedMnemonic: wallet.encryptedMnemonic,
                 passwordHash: wallet.passwordHash, // Store the password hash
+                passwordSalt: wallet.passwordSalt, // Store the password salt
                 sessionData: wallet.sessionData // Store session data
             };
 
@@ -165,6 +166,7 @@ const actions = {
                 },
                 encryptedMnemonic: wallet.encryptedMnemonic,
                 passwordHash: wallet.passwordHash,
+                passwordSalt: wallet.passwordSalt,
                 sessionData: wallet.sessionData
             };
 
@@ -541,11 +543,17 @@ const actions = {
             
             const { wallet } = await storage.get(['wallet']);
             
-            if (!wallet || !wallet.passwordHash) {
-                throw new Error('No wallet found or password hash not set');
+            if (!wallet || !wallet.passwordHash || !wallet.passwordSalt) {
+                throw new Error('No wallet found or password data not set');
             }
             
-            const isValid = await verifyHash(password, wallet.passwordHash);
+            // Convert the salt from hex string back to Buffer if stored as string
+            const salt = typeof wallet.passwordSalt === 'string' 
+                ? Buffer.from(wallet.passwordSalt, 'hex') 
+                : wallet.passwordSalt;
+            
+            // Call verifyHash with all required parameters
+            const isValid = await verifyHash(password, wallet.passwordHash, salt);
             
             if (!isValid) {
                 throw new Error('Invalid password');
@@ -745,73 +753,81 @@ const actions = {
      * @returns {Promise<boolean>} Success status
      */
     async changePassword({ state, commit, dispatch }, { currentPassword, newPassword }) {
-        // Verify current password first
-        const isValid = await dispatch('verifyPassword', currentPassword);
-        if (!isValid) {
-            throw new Error('Current password is incorrect');
-        }
-
         try {
-            // Get all necessary wallet data
-            const data = await storage.getWallet();
-            if (!data) {
-                throw new Error('Wallet data not found');
+            commit('clearError');
+            commit('setLoading', true);
+            
+            // Verify current password
+            const passwordCorrect = await dispatch('verifyPassword', currentPassword);
+            if (!passwordCorrect) {
+                throw new Error('Current password is incorrect');
             }
-
-            // Decrypt sensitive data using current password
-            const { decrypt, encrypt, hash } = await import('../../utils/crypto');
             
-            // Decrypt mnemonic phrase with current password
-            const mnemonic = await decrypt(data.encryptedMnemonic, currentPassword);
+            // Get existing wallet
+            const { wallet } = await storage.get(['wallet']);
             
-            // Get and decrypt private keys for all currencies
-            const privateKeys = {};
-            for (const [currency, addressData] of Object.entries(data.addresses)) {
-                if (addressData.encryptedPrivateKey) {
-                    privateKeys[currency] = await decrypt(
-                        addressData.encryptedPrivateKey, 
-                        currentPassword
-                    );
+            if (!wallet) {
+                throw new Error('No wallet data found');
+            }
+            
+            // Decrypt the mnemonic with the old password
+            const mnemonic = await decrypt(wallet.encryptedMnemonic, currentPassword);
+            
+            // Re-encrypt with the new password
+            const newEncryptedMnemonic = await encrypt(mnemonic, newPassword);
+            
+            // Re-encrypt private keys for all addresses
+            const newAddresses = {};
+            for (const [currency, addressData] of Object.entries(wallet.addresses)) {
+                if (addressData && addressData.encryptedPrivateKey) {
+                    const privateKey = await decrypt(addressData.encryptedPrivateKey, currentPassword);
+                    const newEncryptedPrivateKey = await encrypt(privateKey, newPassword);
+                    
+                    newAddresses[currency] = {
+                        ...addressData,
+                        encryptedPrivateKey: newEncryptedPrivateKey
+                    };
+                } else {
+                    newAddresses[currency] = addressData;
                 }
             }
             
-            // Re-encrypt all sensitive data with new password
-            const encryptedMnemonic = await encrypt(mnemonic, newPassword);
-            const passwordHash = await hash(newPassword);
+            // Generate new password hash and salt
+            const { hash: newPasswordHash, salt: newPasswordSalt } = await WalletService.hashPassword(newPassword);
             
-            // Re-encrypt private keys
-            const updatedAddresses = {};
-            for (const [currency, addressData] of Object.entries(data.addresses)) {
-                updatedAddresses[currency] = {
-                    ...addressData,
-                    encryptedPrivateKey: privateKeys[currency] 
-                        ? await encrypt(privateKeys[currency], newPassword)
-                        : addressData.encryptedPrivateKey
-                };
-            }
+            // Convert salt to hex string for storage
+            const newPasswordSaltHex = typeof newPasswordSalt === 'string' 
+                ? newPasswordSalt 
+                : newPasswordSalt.toString('hex');
             
-            // Create updated wallet data
-            const updatedWalletData = {
-                ...data,
-                addresses: updatedAddresses,
-                encryptedMnemonic,
-                passwordHash
+            // Update wallet with re-encrypted data
+            const updatedWallet = {
+                ...wallet,
+                encryptedMnemonic: newEncryptedMnemonic,
+                addresses: newAddresses,
+                passwordHash: newPasswordHash,
+                passwordSalt: newPasswordSaltHex,
+                passwordChanged: Date.now()
             };
             
-            // Store updated wallet data
-            await storage.saveWallet(updatedWalletData);
+            // Save updated wallet
+            await storage.set({ wallet: updatedWallet });
             
             // Update state
-            commit('setWalletData', updatedWalletData);
+            commit('setWalletData', updatedWallet);
+            commit('setLoading', false);
             
-            // Clean up sensitive data from memory
-            const { secureClearMemory } = await import('../../utils/securityUtils');
-            secureClearMemory({ mnemonic, privateKeys }, ['mnemonic', 'privateKeys']);
+            // Clear sensitive data from memory
+            if (typeof mnemonic === 'string') {
+                mnemonic = '';
+            }
             
             return true;
         } catch (error) {
-            console.error('Error changing password:', error);
-            throw error;
+            console.error('Password change failed:', error);
+            commit('setError', error.message);
+            commit('setLoading', false);
+            return false;
         }
     },
     
@@ -830,8 +846,18 @@ const actions = {
                 throw new Error('Recovery phrase not found');
             }
 
+            // Check that we have the required password data
+            if (!data.passwordHash || !data.passwordSalt) {
+                throw new Error('Password verification data is missing');
+            }
+            
+            // Convert the salt from hex string back to Buffer if stored as string
+            const salt = typeof data.passwordSalt === 'string' 
+                ? Buffer.from(data.passwordSalt, 'hex') 
+                : data.passwordSalt;
+            
             // Verify the password first
-            const passwordValid = await verifyHash(password, data.passwordHash);
+            const passwordValid = await verifyHash(password, data.passwordHash, salt);
             
             if (!passwordValid) {
                 throw new Error('Invalid password');
