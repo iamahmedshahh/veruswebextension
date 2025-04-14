@@ -47,6 +47,15 @@
               {{ amountValidationMessage }}
             </span>
           </div>
+          <div class="form-group">
+            <label>Wallet Password</label>
+            <input 
+              v-model="walletPassword"
+              type="password"
+              placeholder="Enter your wallet password"
+              :disabled="loading"
+            />
+          </div>
           <div class="fee-info" v-if="estimatedFee">
             <div>Estimated Fee: {{ estimatedFee }} {{ selectedCurrency }}</div>
             <div>Total Amount: {{ totalAmount }} {{ selectedCurrency }}</div>
@@ -102,6 +111,7 @@ const showSendModal = ref(false)
 const showReceiveModal = ref(false)
 const recipientAddress = ref('')
 const amount = ref('')
+const walletPassword = ref('')
 const selectedCurrency = ref('VRSCTEST')
 const error = ref('')
 const loading = ref(false)
@@ -123,6 +133,7 @@ const isValidForm = computed(() => {
   return (
     recipientAddress.value &&
     amount.value &&
+    walletPassword.value &&
     !addressValidationMessage.value &&
     !amountValidationMessage.value &&
     parseFloat(totalAmount.value) <= currentBalance.value
@@ -202,7 +213,10 @@ async function handleSend() {
     
     // Get current wallet data from store
     const fromAddress = store.state.wallet.address
-    const privateKey = await store.dispatch('wallet/getPrivateKey')
+    const privateKey = await store.dispatch('wallet/getPrivateKey', {
+      currency: selectedCurrency.value,
+      password: walletPassword.value
+    })
     
     // Send transaction
     const result = await sendCurrency(
@@ -220,6 +234,7 @@ async function handleSend() {
     showSendModal.value = false
     recipientAddress.value = ''
     amount.value = ''
+    walletPassword.value = ''
     estimatedFee.value = 0
     
     // Show success notification
@@ -245,6 +260,7 @@ watch(showSendModal, (newVal) => {
     // Reset form when modal closes
     recipientAddress.value = ''
     amount.value = ''
+    walletPassword.value = ''
     error.value = ''
     estimatedFee.value = 0
     addressValidationMessage.value = ''

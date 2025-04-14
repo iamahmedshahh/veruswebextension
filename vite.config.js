@@ -24,7 +24,7 @@ export default defineConfig({
       manifest: {
         manifest_version: 3,
         name: 'Layer VOne (Testnet)',
-        version: '0.0.5',
+        version: '0.0.6',
         description: 'Help me make the extension that brings native Layer 1 and Web 3 together on The Verus Blockchain',
         icons: {
           "16": "icons/logo.png",
@@ -33,14 +33,11 @@ export default defineConfig({
         },
         permissions: [
           'storage',
-          'activeTab',
-          'scripting',
           'tabs',
           'windows'
         ],
         host_permissions: [
-          "http://localhost:*/*",
-          "https://*/*"
+          "<all_urls>"
         ],
         action: {
           default_popup: 'popup.html',
@@ -55,7 +52,7 @@ export default defineConfig({
         },
         content_scripts: [
           {
-            matches: ["http://localhost:*/*", "https://*/*"],
+            matches: ["<all_urls>"],
             js: ["src/contentScript.js"],
             run_at: "document_start"
           }
@@ -63,7 +60,7 @@ export default defineConfig({
         web_accessible_resources: [
           {
             resources: ["src/provider.js"],
-            matches: ["http://localhost:*/*", "https://*/*"]
+            matches: ["<all_urls>"]
           }
         ]
       }

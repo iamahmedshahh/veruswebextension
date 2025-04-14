@@ -1,6 +1,7 @@
 const pkg = require('@bitgo/utxo-lib');
-const { ECPair, TransactionBuilder, Transaction, script, networks, opcodes } = pkg;
+const { ECPair, Transaction, script, networks, opcodes, TransactionBuilder } = pkg;
 const bs58 = require('bs58');
+const crypto = require('crypto');
 
 // Static configuration
 const TEST_PRIVATE_KEY = 'UwpJqNV91Ezbv4YbdqPAzyT36scbWm9uaRmHqPVC3xa6u5KPJydD'; // Add your private key here
@@ -33,6 +34,9 @@ const NETWORK = {
         saplingActive: true
     }
 };
+
+// Custom Verus network configuration with Zcash compatibility flags
+const VERUS_NETWORK = networks.verustest // Hex representation of 0x892f2085
 
 // RPC Configuration
 const RPC_SERVER = 'https://api.verustest.net';  // Verus testnet RPC URL with endpoint
@@ -125,118 +129,6 @@ const SATS_PER_COIN = 100000000; // 1 VRSC = 100,000,000 satoshis
 const DEFAULT_FEE = 10000; // 0.0001 VRSC
 
 /**
- * Build and sign a transaction
- * @param {string} fromAddress - Source address
- * @param {string} toAddress - Destination address
- * @param {number} amount - Amount to send in VRSC
- * @param {string} privateKey - Private key for signing
- * @returns {Promise<Object>} Transaction details
- */
-async function buildAndSignTransaction(fromAddress, toAddress, amount, privateKey) {
-    try {
-        console.log(`Building transaction from ${fromAddress} to ${toAddress} for ${amount} VRSCTEST`);
-        
-        // Convert amount to satoshis
-        const amountSat = Math.round(amount * SATS_PER_COIN);
-        console.log('Amount in satoshis:', amountSat);
-        
-        // Get UTXOs
-        const utxos = await fetchUTXOs(fromAddress);
-        console.log(`Found ${utxos.length} UTXOs`);
-        
-        if (utxos.length === 0) {
-            throw new Error(`No UTXOs available for ${fromAddress}`);
-        }
-        
-        // Find a suitable UTXO with enough funds
-        let selectedUtxo = null;
-        const fee = DEFAULT_FEE;
-        
-        for (const utxo of utxos) {
-            if (utxo.satoshis >= amountSat + fee) {
-                selectedUtxo = utxo;
-                break;
-            }
-        }
-        
-        if (!selectedUtxo) {
-            // Use the largest UTXO available
-            selectedUtxo = utxos.reduce((max, current) => 
-                (current.satoshis > (max?.satoshis || 0)) ? current : max, null);
-            
-            if (selectedUtxo.satoshis < amountSat + fee) {
-                throw new Error(`Insufficient funds. Required: ${(amountSat + fee) / SATS_PER_COIN} VRSC, Available: ${selectedUtxo.satoshis / SATS_PER_COIN} VRSC`);
-            }
-        }
-        
-        console.log('Selected UTXO:', selectedUtxo);
-        
-        // Create transaction builder with Verus network
-        const txb = new TransactionBuilder(NETWORK);
-        
-        // Critical: Set the version to 4 for Verus
-        txb.setVersion(4);
-        
-        // Add the input
-        txb.addInput(selectedUtxo.txid, selectedUtxo.vout);
-        
-        // Add the output (recipient)
-        txb.addOutput(toAddress, amountSat);
-        
-        // Calculate change amount
-        const changeAmount = selectedUtxo.satoshis - amountSat - fee;
-        console.log('Change amount (satoshis):', changeAmount);
-        
-        // Add change output if needed
-        if (changeAmount > 546) { // dust threshold
-            txb.addOutput(fromAddress, changeAmount);
-        }
-        
-        // Sign the transaction input
-        const keyPair = ECPair.fromWIF(privateKey, NETWORK);
-        txb.sign(0, keyPair, null, Transaction.SIGHASH_ALL, selectedUtxo.satoshis);
-        
-        // Build the transaction
-        const tx = txb.build();
-        let txHex = tx.toHex();
-        
-        // IMPORTANT: Modify the transaction hex to include the Verus version group ID
-        // Verus requires version group ID after the version bytes: 85202f89
-        console.log('Original transaction hex:', txHex);
-        
-        // Insert the version group ID after the version (first 8 characters in hex)
-        const verusVersionGroupId = '85202f89';
-        txHex = txHex.substring(0, 8) + verusVersionGroupId + txHex.substring(8);
-        
-        console.log('Modified transaction hex with Verus version group ID:', txHex);
-        
-        console.log('Transaction built successfully');
-        console.log('- Transaction version:', tx.version);
-        console.log('- Inputs:', tx.ins.length);
-        console.log('- Outputs:', tx.outs.length);
-        console.log('- Transaction size:', txHex.length / 2, 'bytes');
-        
-        // Return the modified transaction details
-        return {
-            hex: txHex,
-            txid: tx.getId(), // Note: txid will change but we can recalculate if needed
-            inputs: [{
-                txid: selectedUtxo.txid,
-                vout: selectedUtxo.vout,
-                satoshis: selectedUtxo.satoshis
-            }],
-            outputs: [
-                { address: toAddress, satoshis: amountSat },
-                ...(changeAmount > 546 ? [{ address: fromAddress, satoshis: changeAmount }] : [])
-            ]
-        };
-    } catch (error) {
-        console.error('Error building transaction:', error);
-        throw error;
-    }
-}
-
-/**
  * Fetch UTXOs for an address
  * @param {string} address - Address to fetch UTXOs for
  * @returns {Promise<Array>} UTXOs
@@ -297,43 +189,172 @@ async function broadcastTransaction(txHex) {
     }
 }
 
-/**
- * Run a test transaction
- */
-async function runTransaction() {
+// --- Conversion Output Script Helper (ported from extension) ---
+function createCurrencyOutputScript(address, currencyId, flags = 0) {
+    // Validate address
+    let decoded;
     try {
-        console.log('Starting simple transaction test');
+        decoded = bs58.decode(address);
+        if (decoded.length !== 25) throw new Error('Invalid address length');
+    } catch (e) { throw new Error('Invalid address: ' + e.message); }
+    const hash160 = decoded.slice(1, 21);
+    // Flags: 0x03 for currency + non-gateway
+    const scriptFlags = flags | 0x03;
+    // Handle currencyId (base58 or hex)
+    let currencyIdBuffer;
+    if (currencyId.startsWith('i')) {
+        const decodedId = bs58.decode(currencyId);
+        currencyIdBuffer = decodedId.slice(1, 21);
+    } else {
+        currencyIdBuffer = Buffer.from(currencyId, 'hex');
+    }
+    
+    // Build the conversion script
+    const scriptElements = [
+        Buffer.from([0xc0]), // OP_CONVERT
+        Buffer.from([0x04]), // Version
+        Buffer.from([scriptFlags]),
+        Buffer.from([0x01]), // Num outputs
+        Buffer.from([0x01]), // Output index
+        currencyIdBuffer,
+        Buffer.from([opcodes.OP_DUP]),
+        Buffer.from([opcodes.OP_HASH160]),
+        hash160,
+        Buffer.from([opcodes.OP_EQUALVERIFY]),
+        Buffer.from([opcodes.OP_CHECKSIG])
+    ];
+    const scriptBuffer = Buffer.concat(scriptElements);
+    
+    // Create P2SH script
+    const scriptHash = crypto.createHash('sha256').update(scriptBuffer).digest().slice(0, 20);
+    const p2shScript = script.compile([
+        opcodes.OP_HASH160,
+        scriptHash,
+        opcodes.OP_EQUAL
+    ]);
+    
+    return {
+        scriptBuffer,
+        p2shScript
+    };
+}
+
+// --- Updated conversion transaction builder ---
+async function testConversionTransactionWithUTXO({ fromAddress, toAddress, amount, currency, convertTo, viaCurrency, privateKey }) {
+    try {
+        privateKey = privateKey || TEST_PRIVATE_KEY;
         
-        // Build and sign the transaction
-        const tx = await buildAndSignTransaction(
-            TEST_ADDRESS,
-            TEST_ADDRESS,
-            0.001, // Small test amount
-            TEST_PRIVATE_KEY
+        // Step 1: Get UTXOs
+        console.log(`Building transaction from ${fromAddress} to ${toAddress}`);
+        console.log(`Converting ${amount} ${currency} to ${convertTo}${viaCurrency ? ` via ${viaCurrency}` : ''}`);
+        
+        const utxos = await fetchUTXOs(fromAddress);
+        if (!utxos || utxos.length === 0) throw new Error('No UTXOs found');
+        
+        // Step 2: Select UTXOs
+        const fee = 0.0001;
+        const totalNeeded = amount + fee;
+        const selected = utxos.find(u => u.satoshis / SATS_PER_COIN >= totalNeeded);
+        if (!selected) throw new Error('No UTXO with sufficient funds');
+        
+        console.log('Selected UTXO:', {
+            txid: selected.txid.substring(0, 10) + '...',
+            vout: selected.outputIndex || selected.vout,
+            satoshis: selected.satoshis / SATS_PER_COIN
+        });
+        
+        // Create raw transaction with manual serialization to include versionGroupId
+        const tx = new Transaction();
+        tx.version = 4;
+        
+        // Add the input
+        tx.addInput(Buffer.from(selected.txid, 'hex').reverse(), selected.outputIndex || selected.vout);
+        
+        // Get conversion script
+        const currencyId = CURRENCY_IDS[convertTo] || convertTo;
+        console.log('Using currency ID for conversion:', currencyId);
+        const scriptInfo = createCurrencyOutputScript(toAddress, currencyId);
+        console.log('Created conversion script, length:', scriptInfo.p2shScript.length);
+        
+        // Add output with conversion script
+        tx.addOutput(scriptInfo.p2shScript, Math.round(amount * SATS_PER_COIN));
+        
+        // Add change output if needed
+        const change = selected.satoshis - Math.round((amount + fee) * SATS_PER_COIN);
+        if (change > 0) {
+            console.log('Adding change output:', change / SATS_PER_COIN);
+            
+            // Create standard P2PKH script for the change
+            const fromHash160 = addressToHash160(fromAddress);
+            const p2pkhScript = script.compile([
+                opcodes.OP_DUP,
+                opcodes.OP_HASH160,
+                fromHash160,
+                opcodes.OP_EQUALVERIFY,
+                opcodes.OP_CHECKSIG
+            ]);
+            
+            tx.addOutput(p2pkhScript, change);
+        }
+        
+        // Step 4: Sign the transaction
+        // Since we're building the tx manually, we need to sign it manually too
+        const keyPair = ECPair.fromWIF(privateKey, networks.verustest);
+        const fromPubKeyHash = addressToHash160(fromAddress);
+        
+        // Create the input script
+        const signatureHash = tx.hashForSignature(
+            0,  // Input index
+            script.compile([
+                opcodes.OP_DUP,
+                opcodes.OP_HASH160,
+                fromPubKeyHash,
+                opcodes.OP_EQUALVERIFY,
+                opcodes.OP_CHECKSIG
+            ]),
+            Transaction.SIGHASH_ALL
         );
         
+        // Sign the hash and create the signature script
+        const signature = keyPair.sign(signatureHash);
+        const signatureScript = script.compile([
+            Buffer.concat([
+                signature.toScriptSignature(Transaction.SIGHASH_ALL),
+                keyPair.getPublicKeyBuffer()
+            ])
+        ]);
+        
+        // Add the signature script to the input
+        tx.setInputScript(0, signatureScript);
+        
+        // Get the basic transaction hex
+        let txHex = tx.toHex();
+        
+        // IMPORTANT: We need to manually insert the version group ID
+        // Verus transactions require a version group ID (0x892f2085) after the version field
+        // The version is the first 4 bytes (8 hex chars), then we insert the version group ID
+        const VERSION_GROUP_ID = '85202f89'; // Little-endian format
+        txHex = txHex.substring(0, 8) + VERSION_GROUP_ID + txHex.substring(8);
+        
         console.log('Transaction built and signed successfully');
+        console.log('Transaction hex (with versionGroupId):', txHex.substring(0, 64) + '...');
         
-        // Broadcast the transaction
-        const txid = await broadcastTransaction(tx.hex);
+        // Step 5: Broadcast
+        console.log('Broadcasting transaction...');
+        const txid = await broadcastTransaction(txHex);
+        console.log('Transaction broadcast successful with txid:', txid);
         
-        console.log('Transaction completed successfully!');
-        console.log('Transaction ID:', txid);
-        
-        return { txid, hex: tx.hex };
-    } catch (error) {
-        console.error('Transaction failed:', error);
-        throw error;
+        return { txid, hex: txHex };
+    } catch (e) {
+        console.error('Conversion transaction failed:', e);
+        throw e;
     }
 }
 
-// Execute the transaction
-runTransaction();
-
 // Export functions for use in other modules
 module.exports = {
-    buildAndSignTransaction,
     fetchUTXOs,
     broadcastTransaction,
-    runTransaction
+    testConversionTransactionWithUTXO,
+    TEST_PRIVATE_KEY
 };

@@ -25,8 +25,7 @@ export function getManifest() {
     permissions: [
       'storage',
       'unlimitedStorage',
-      'activeTab',
-      'scripting'
+
     ],
     host_permissions: [
       "<all_urls>"

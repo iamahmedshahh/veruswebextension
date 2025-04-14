@@ -489,7 +489,7 @@ const actions = {
             commit('setLoading', true);
             
             // Verify password
-            await dispatch('verifyPassword', password);
+            await this.dispatch('wallet/verifyPassword', password);
             
             // Create a new session
             const sessionData = WalletService.createSession();
@@ -712,15 +712,38 @@ const actions = {
     /**
      * Gets a private key for a specific currency (securely)
      */
-    async getPrivateKey({ state, commit }, { currency, password }) {
+    async getPrivateKey({ state, commit, rootGetters }, { currency, password }) {
         try {
-            if (!state.addresses || !state.addresses[currency]) {
-                throw new Error(`No address found for ${currency}`);
+            console.log('Getting address for currency:', currency, 'Addresses:', state.addresses);
+            
+            // Get the network's main coin from network module
+            const mainCoin = rootGetters['network/mainCoin'];
+            
+            // For testnet/mainnet context and tokens:
+            // 1. If asking for VRSCTEST use the VRSC key
+            // 2. If asking for a token (not BTC/ETH), use the main chain key
+            let lookupCurrency = currency;
+            
+            // Handle main coins mapping
+            if (currency === 'VRSCTEST') {
+                lookupCurrency = 'VRSC';
+            }
+            // Handle tokens - use the main chain key
+            else if (currency !== 'VRSC' && 
+                     currency !== 'BTC' && 
+                     currency !== 'ETH' &&
+                     currency !== 'VRSCTEST') {
+                // If on testnet, map to VRSC since that's how keys are stored internally
+                lookupCurrency = mainCoin === 'VRSCTEST' ? 'VRSC' : mainCoin;
             }
             
-            const { encryptedPrivateKey } = state.addresses[currency];
+            if (!state.addresses || !state.addresses[lookupCurrency]) {
+                throw new Error(`No address found for ${currency} (mapped to ${lookupCurrency})`);
+            }
+            
+            const { encryptedPrivateKey } = state.addresses[lookupCurrency];
             if (!encryptedPrivateKey) {
-                throw new Error(`No encrypted private key found for ${currency}`);
+                throw new Error(`No encrypted private key found for ${lookupCurrency}`);
             }
             
             // Verify password first

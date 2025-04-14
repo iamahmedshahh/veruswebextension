@@ -140,6 +140,17 @@
                             required
                         />
                     </div>
+                    <div class="form-group">
+                        <label for="walletPassword">Wallet Password:</label>
+                        <input 
+                            id="walletPassword"
+                            v-model="walletPassword"
+                            type="password"
+                            placeholder="Enter your wallet password"
+                            :disabled="isLoading"
+                            required
+                        />
+                    </div>
                     <div v-if="estimatedFee" class="fee-info">
                         Estimated Fee: {{ estimatedFee }} {{ selectedCurrencyForAction }}
                     </div>
@@ -147,7 +158,7 @@
                     <button 
                         type="submit"
                         class="send-button"
-                        :disabled="isLoading || !recipientAddress || !amount"
+                        :disabled="isLoading || !recipientAddress || !amount || !walletPassword"
                     >
                         <i v-if="isLoading" class="fas fa-spinner fa-spin"></i>
                         <span v-else>Send</span>
@@ -214,6 +225,7 @@ export default {
         const selectedCurrencyForAction = ref('');
         const recipientAddress = ref('');
         const amount = ref('');
+        const walletPassword = ref('');
         const error = ref('');
         const isLoading = ref(false);
         const estimatedFee = ref(0);
@@ -304,7 +316,10 @@ export default {
                 }
                 
                 console.log('Getting private key...');
-                const privateKey = await store.dispatch('wallet/getPrivateKey');
+                const privateKey = await store.dispatch('wallet/getPrivateKey', {
+                    currency: selectedCurrencyForAction.value,
+                    password: walletPassword.value
+                });
                 if (!privateKey) {
                     throw new Error('Private key not available. Please check if wallet is unlocked');
                 }
@@ -328,6 +343,7 @@ export default {
                 showSendModal.value = false;
                 recipientAddress.value = '';
                 amount.value = '';
+                walletPassword.value = '';
                 
                 // Show success notification
                 store.commit('notification/show', {
@@ -465,6 +481,7 @@ export default {
             selectedCurrencyForAction,
             recipientAddress,
             amount,
+            walletPassword,
             error,
             isLoading,
             estimatedFee,

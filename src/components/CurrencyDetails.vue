@@ -52,7 +52,17 @@
               v-model="amount"
               type="number"
               step="0.00000001"
-              placeholder="Enter amount"
+              placeholder="Enter amount to send"
+              required
+            />
+          </div>
+          <div class="form-group">
+            <label for="walletPassword">Wallet Password</label>
+            <input
+              id="walletPassword"
+              v-model="walletPassword"
+              type="password"
+              placeholder="Enter your wallet password"
               required
             />
           </div>
@@ -125,6 +135,7 @@ const isLoading = ref(false)
 const estimatedFee = ref(0)
 const receiveQrCode = ref('')
 const useConversion = ref(false)
+const walletPassword = ref('')
 
 // Computed
 const currency = computed(() => route.params.currency)
@@ -154,7 +165,7 @@ const handleReceive = async () => {
 }
 
 const executeSend = async () => {
-  if (!recipientAddress.value || !amount.value) {
+  if (!recipientAddress.value || !amount.value || !walletPassword.value) {
     error.value = 'Please fill in all fields'
     return
   }
@@ -164,8 +175,8 @@ const executeSend = async () => {
     error.value = ''
     
     const wallet = store.state.wallet
-    if (!wallet || !wallet.privateKey) {
-      throw new Error('Wallet not found or locked')
+    if (!wallet) {
+      throw new Error('Wallet not found')
     }
 
     // Execute the transaction based on conversion preference
@@ -174,8 +185,8 @@ const executeSend = async () => {
         fromAddress: wallet.address,
         toAddress: recipientAddress.value,
         amount: parseFloat(amount.value),
-        privateKey: wallet.privateKey,
-        currency: currency.value,
+        password: walletPassword.value,
+        currency: currency.value
         // Using default via and convertto from transaction.js
       })
     } else {
@@ -183,7 +194,7 @@ const executeSend = async () => {
         fromAddress: wallet.address,
         toAddress: recipientAddress.value,
         amount: parseFloat(amount.value),
-        privateKey: wallet.privateKey,
+        password: walletPassword.value,
         currency: currency.value
       })
     }
@@ -191,6 +202,7 @@ const executeSend = async () => {
     showSendModal.value = false
     recipientAddress.value = ''
     amount.value = ''
+    walletPassword.value = ''
     useConversion.value = false
     
     // Refresh balances after successful transaction
