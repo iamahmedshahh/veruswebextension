@@ -444,6 +444,24 @@ async function sendCurrency(fromAddressOrParams, toAddress, amount, privateKey, 
         params.currency = store.getters['network/mainCoin'];
     }
 
+    // Handle case when password is provided instead of privateKey (from CurrencyDetails.vue)
+    if (params.password && !params.privateKey) {
+        try {
+            console.log('Getting private key from wallet store with password');
+            // Get private key from wallet store
+            params.privateKey = await store.dispatch('wallet/getPrivateKey', {
+                currency: params.currency,
+                password: params.password
+            });
+            if (!params.privateKey) {
+                throw new Error('Failed to retrieve private key with provided password');
+            }
+        } catch (error) {
+            console.error('Error getting private key:', error);
+            throw new Error(`Authentication failed: ${error.message}`);
+        }
+    }
+
     const mainCoin = store.getters['network/mainCoin'];
     const isMainCoin = params.currency === mainCoin;
 
@@ -558,10 +576,27 @@ async function sendCurrency(fromAddressOrParams, toAddress, amount, privateKey, 
         
         console.log(`Found ${currencyUtxos.length} UTXOs for ${params.currency}`);
 
+        // Verify each UTXO is actually unspent before using it
+        const confirmedUnspentUtxos = [];
         for (const utxo of currencyUtxos) {
-            if (currencyTotal < amountSats) {
-                // Verify UTXO is still unspent
+            try {
+                // This will throw an error if the UTXO doesn't exist or is spent
                 await verifyUtxo(utxo);
+                confirmedUnspentUtxos.push(utxo);
+            } catch (error) {
+                console.warn(`Skipping spent or invalid UTXO: ${utxo.txid}:${utxo.outputIndex}`, error.message);
+                // Continue to next UTXO
+            }
+        }
+        
+        console.log(`${confirmedUnspentUtxos.length} of ${currencyUtxos.length} UTXOs are confirmed unspent`);
+        
+        if (confirmedUnspentUtxos.length === 0) {
+            throw new Error(`No unspent UTXOs available for ${params.currency}`);
+        }
+
+        for (const utxo of confirmedUnspentUtxos) {
+            if (currencyTotal < amountSats) {
                 selectedUtxos.push(utxo);
                 txBuilder.addInput(utxo.txid, utxo.outputIndex);
                 currencyTotal += getCurrencyValueFromUtxo(utxo, params.currency);
@@ -577,11 +612,20 @@ async function sendCurrency(fromAddressOrParams, toAddress, amount, privateKey, 
             const feeUtxos = utxos.filter(utxo => isUtxoMatchingCurrency(utxo, mainCoin));
             
             console.log(`Found ${feeUtxos.length} UTXOs for fees (${mainCoin})`);
-
+            
+            // Verify fee UTXOs are unspent
+            const confirmedFeeUtxos = [];
             for (const utxo of feeUtxos) {
-                if (feeTotal < feeSats) {
-                    // Verify UTXO is still unspent
+                try {
                     await verifyUtxo(utxo);
+                    confirmedFeeUtxos.push(utxo);
+                } catch (error) {
+                    console.warn(`Skipping spent or invalid fee UTXO: ${utxo.txid}:${utxo.outputIndex}`, error.message);
+                }
+            }
+
+            for (const utxo of confirmedFeeUtxos) {
+                if (feeTotal < feeSats) {
                     selectedUtxos.push(utxo);
                     txBuilder.addInput(utxo.txid, utxo.outputIndex);
                     feeTotal += getCurrencyValueFromUtxo(utxo, mainCoin);
@@ -634,7 +678,46 @@ async function sendCurrency(fromAddressOrParams, toAddress, amount, privateKey, 
             }
         }
 
-        const keyPair = ECPair.fromWIF(params.privateKey, NETWORK);
+        let keyPair;
+        try {
+            // Handle different formats of private key
+            if (typeof params.privateKey === 'string') {
+                // Direct WIF string
+                keyPair = ECPair.fromWIF(params.privateKey, NETWORK);
+            } 
+            else if (typeof params.privateKey === 'object' && params.privateKey !== null) {
+                // If it's a complex object from getPrivateKey (wallet store)
+                if (params.privateKey.wif) {
+                    keyPair = ECPair.fromWIF(params.privateKey.wif, NETWORK);
+                } else if (params.privateKey.privateKey) {
+                    keyPair = ECPair.fromWIF(params.privateKey.privateKey, NETWORK);
+                } else if (params.privateKey.toString) {
+                    // Try toString() method if available
+                    const wifString = params.privateKey.toString();
+                    keyPair = ECPair.fromWIF(wifString, NETWORK);
+                } else {
+                    // Last resort - try JSON stringify and extract
+                    console.log('Private key is complex object, attempting to extract WIF');
+                    const keyString = JSON.stringify(params.privateKey);
+                    // Very basic extraction - in a real app you'd use a more robust method
+                    const wifMatch = keyString.match(/"(wif|privateKey)":"([^"]+)"/);
+                    if (wifMatch && wifMatch[2]) {
+                        keyPair = ECPair.fromWIF(wifMatch[2], NETWORK);
+                    } else {
+                        throw new Error('Could not extract WIF from private key object');
+                    }
+                }
+            } else {
+                throw new Error('Invalid private key format');
+            }
+        } catch (error) {
+            console.error('Error creating key pair:', error);
+            throw new Error(`Invalid private key format: ${error.message}`);
+        }
+
+        if (!keyPair) {
+            throw new Error('Failed to create key pair from private key');
+        }
 
         // Sign all inputs
         for (let i = 0; i < selectedUtxos.length; i++) {
@@ -730,6 +813,24 @@ async function sendConvertCurrency(fromAddressOrParams, toAddress, amount, priva
         };
     }
 
+    // Handle case when password is provided instead of privateKey (from CurrencyDetails.vue)
+    if (params.password && !params.privateKey) {
+        try {
+            console.log('Getting private key from wallet store with password for conversion');
+            // Get private key from wallet store
+            params.privateKey = await store.dispatch('wallet/getPrivateKey', {
+                currency: params.currency,
+                password: params.password
+            });
+            if (!params.privateKey) {
+                throw new Error('Failed to retrieve private key with provided password');
+            }
+        } catch (error) {
+            console.error('Error getting private key for conversion:', error);
+            throw new Error(`Authentication failed: ${error.message}`);
+        }
+    }
+
     try {
         console.log('Sending convert transaction with params:', {
             ...params,
@@ -746,7 +847,46 @@ async function sendConvertCurrency(fromAddressOrParams, toAddress, amount, priva
 
         const network = getNetworkConfig();
 
-        const keyPair = ECPair.fromWIF(params.privateKey, network);
+        let keyPair;
+        try {
+            // Handle different formats of private key
+            if (typeof params.privateKey === 'string') {
+                // Direct WIF string
+                keyPair = ECPair.fromWIF(params.privateKey, network);
+            } 
+            else if (typeof params.privateKey === 'object' && params.privateKey !== null) {
+                // If it's a complex object from getPrivateKey (wallet store)
+                if (params.privateKey.wif) {
+                    keyPair = ECPair.fromWIF(params.privateKey.wif, network);
+                } else if (params.privateKey.privateKey) {
+                    keyPair = ECPair.fromWIF(params.privateKey.privateKey, network);
+                } else if (params.privateKey.toString) {
+                    // Try toString() method if available
+                    const wifString = params.privateKey.toString();
+                    keyPair = ECPair.fromWIF(wifString, network);
+                } else {
+                    // Last resort - try JSON stringify and extract
+                    console.log('Private key is complex object, attempting to extract WIF');
+                    const keyString = JSON.stringify(params.privateKey);
+                    // Very basic extraction - in a real app you'd use a more robust method
+                    const wifMatch = keyString.match(/"(wif|privateKey)":"([^"]+)"/);
+                    if (wifMatch && wifMatch[2]) {
+                        keyPair = ECPair.fromWIF(wifMatch[2], network);
+                    } else {
+                        throw new Error('Could not extract WIF from private key object');
+                    }
+                }
+            } else {
+                throw new Error('Invalid private key format');
+            }
+        } catch (error) {
+            console.error('Error creating key pair:', error);
+            throw new Error('Invalid private key format: ' + error.message);
+        }
+
+        if (!keyPair) {
+            throw new Error('Failed to create key pair from private key');
+        }
 
         const txb = new TransactionBuilder(network);
         txb.setVersion(4);

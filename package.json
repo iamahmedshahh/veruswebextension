@@ -42,7 +42,7 @@
     "stream-browserify": "^3.0.0",
     "tiny-secp256k1": "^2.2.3",
     "util": "^0.12.5",
-    "verusd-rpc-ts-client": "git+https://github.com/VerusCoin/verusd-rpc-ts-client.git",
+    "verusd-rpc-ts-client": "git+https://github.com/VerusCoin/verusd-rpc-ts-client.git#main",
     "vite-plugin-node-polyfills": "^0.22.0",
     "vue": "^3.3.11",
     "vue-router": "^4.5.0",
@@ -63,8 +63,8 @@
     "vite-plugin-wasm": "^3.3.0"
   },
   "resolutions": {
-    "typeforce": "git+https://github.com/monkins1010/typeforce.git"
-  },
+  "typeforce": "git+https://github.com/monkins1010/typeforce.git#9d0ac0c8e3a6077fd44577fed1683e1db68c93e7"
+},
   "jest": {
     "testEnvironment": "jsdom",
     "transform": {},
