@@ -5,9 +5,9 @@ const fromAddress = 'RV2sJNR3Vi5nJT5h7AsNah7gPKTQaJ8e2L';
 const toAddress = 'RV2sJNR3Vi5nJT5h7AsNah7gPKTQaJ8e2L';
 const amount = 1;
 const currency = 'VRSCTEST';
-const convertTo = 'iCtawpxUiCc2sEupt7Z4u8SDAncGZpgSKm'; // vETH
+const convertTo = 'iL1mYzEzNewFNPFt8APcVn9zGULTQpbWDt'; // vETH
 const privateKey = TEST_PRIVATE_KEY;
-const viaCurrency = 'iSojYsotVzXz4wh2eJriASGo6UidJDDhL2'; // bridge.veth
+const viaCurrency = null; // bridge.veth
 
 console.log(`Testing UTXO conversion transaction: ${amount} from ${fromAddress} to ${toAddress} converting to ${convertTo} via ${viaCurrency}`);
 

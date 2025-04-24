@@ -96,38 +96,71 @@ function getNetworkConfig() {
     }
 }
 
-// Currency ID mapping - now dynamic
-const CURRENCY_IDS = {
-    'USD': 'iFawzbS99RqGs7J2TNxME1TmmayBGuRkA2',
-    'SPORTS': 'iK3jCnnhGxkiXMYn3fhXnEhPd9gT2KME6Q',
-    'SAILING': 'iSAiLinGnEwcurrEncyiDhEre123456789'
-};
+// Currency ID cache - only used as a fallback
+const CURRENCY_IDS = {};
 
 async function getCurrencyId(currencySymbol) {
     try {
         console.log(`Getting currency ID for: ${currencySymbol}`);
         
-        // First check if we have it in our mapping
-        if (CURRENCY_IDS[currencySymbol]) {
-            console.log(`Found ${currencySymbol} in cache:`, CURRENCY_IDS[currencySymbol]);
-            return CURRENCY_IDS[currencySymbol];
+        // Always try to get the latest currency ID from the RPC first
+        try {
+            console.log(`Making RPC call for currency: ${currencySymbol}`);
+            const currencyInfo = await makeRPCCall('getcurrency', [currencySymbol]);
+            console.log(`RPC response for ${currencySymbol}:`, currencyInfo);
+            
+            if (currencyInfo && currencyInfo.currencyid) {
+                // Cache it for future use (as fallback only)
+                CURRENCY_IDS[currencySymbol] = currencyInfo.currencyid;
+                console.log(`Using real-time currency ID for ${currencySymbol}:`, currencyInfo.currencyid);
+                return currencyInfo.currencyid;
+            }
+        } catch (rpcError) {
+            console.warn(`RPC error fetching currency ID for ${currencySymbol}:`, rpcError);
+            console.log('Trying fallback methods...');
         }
 
-        // If not found in mapping, try to get it from the RPC
-        console.log(`Making RPC call for currency: ${currencySymbol}`);
-        const currencyInfo = await makeRPCCall('getcurrency', [currencySymbol]);
-        console.log(`RPC response for ${currencySymbol}:`, currencyInfo);
-        
-        if (currencyInfo && currencyInfo.currencyid) {
-            // Cache it for future use
-            CURRENCY_IDS[currencySymbol] = currencyInfo.currencyid;
-            console.log(`Cached currency ID for ${currencySymbol}:`, currencyInfo.currencyid);
-            return currencyInfo.currencyid;
+        // Fallback: check if we have it in our cache
+        if (CURRENCY_IDS[currencySymbol]) {
+            console.log(`Using cached currency ID for ${currencySymbol}:`, CURRENCY_IDS[currencySymbol]);
+            return CURRENCY_IDS[currencySymbol];
         }
 
         throw new Error(`Could not find currency ID for ${currencySymbol}`);
     } catch (error) {
         console.error('Error getting currency ID:', error);
+        throw error;
+    }
+}
+
+async function getCurrencyHexId(currencySymbol) {
+    try {
+        // First check if we already have the i-address ID
+        const currencyId = await getCurrencyId(currencySymbol);
+        
+        // Get the currency definition to extract the hex ID
+        const currencyInfo = await makeRPCCall('getcurrency', [currencySymbol]);
+        
+        if (currencyInfo && currencyInfo.currencyidhex) {
+            console.log(`Found hex ID for ${currencySymbol}: ${currencyInfo.currencyidhex}`);
+            return currencyInfo.currencyidhex;
+        }
+        
+        // If we couldn't get the hex ID directly, try to decode the i-address
+        if (currencyId && currencyId.startsWith('i')) {
+            try {
+                const decodedId = bs58.decode(currencyId).slice(1, 21);
+                const hexId = decodedId.toString('hex');
+                console.log(`Decoded hex ID for ${currencySymbol} from ${currencyId}: ${hexId}`);
+                return hexId;
+            } catch (error) {
+                console.error(`Error decoding currency ID ${currencyId}:`, error);
+            }
+        }
+        
+        throw new Error(`Could not determine hex ID for currency ${currencySymbol}`);
+    } catch (error) {
+        console.error(`Error getting hex ID for ${currencySymbol}:`, error);
         throw error;
     }
 }
@@ -390,6 +423,42 @@ function createCurrencyOutputScript(address, currencyId, flags = 0) {
     }
 }
 
+/**
+ * Dynamically builds a mapping of UTXOs to their detected currencies.
+ * This is reusable for any UTXO array and supports multi-currency transactions.
+ * @param {Array} utxos - Array of UTXO objects
+ * @param {string} mainCoin - The main coin symbol (e.g., 'VRSCTEST')
+ * @returns {Object} - Mapping of 'txid:outputIndex' -> detected currency symbol
+ */
+function buildUtxoCurrencyMap(utxos, mainCoin) {
+    const map = {};
+    for (const utxo of utxos) {
+        const key = `${utxo.txid}:${utxo.outputIndex}`;
+        // If it's a main coin UTXO (has satoshis and not a currencyvalues match)
+        if ((typeof utxo.satoshis === 'number' && utxo.satoshis > 0) && (!utxo.currencyvalues || Object.keys(utxo.currencyvalues).length === 0)) {
+            map[key] = mainCoin;
+        } else if (utxo.currencyvalues && Object.keys(utxo.currencyvalues).length > 0) {
+            // Find the first currency symbol or id with a positive value
+            let found = false;
+            for (const [id, value] of Object.entries(utxo.currencyvalues)) {
+                // Try to get currency symbol from value object or fallback to id
+                const symbol = (value && typeof value === 'object' && value.currencyname) ? value.currencyname : id;
+                if ((typeof value === 'object' && value.value > 0) || (typeof value === 'number' && value > 0)) {
+                    map[key] = symbol;
+                    found = true;
+                    break;
+                }
+            }
+            // If not found, fallback to mainCoin
+            if (!found) map[key] = mainCoin;
+        } else {
+            // Fallback: treat as mainCoin
+            map[key] = mainCoin;
+        }
+    }
+    return map;
+}
+
 async function lockUnspent(lock, utxos) {
     try {
         return await makeRPCCall('lockunspent', [
@@ -405,15 +474,88 @@ async function lockUnspent(lock, utxos) {
     }
 }
 
-async function verifyUtxo(utxo) {
+async function verifyUtxo(utxo, currency = null) {
     try {
+        // Check if the UTXO exists on the blockchain (this will throw if UTXO no longer exists)
         const txInfo = await makeRPCCall('getrawtransaction', [utxo.txid, 1]);
         if (!txInfo || !txInfo.vout || !txInfo.vout[utxo.outputIndex]) {
-            throw new Error(`UTXO ${utxo.txid}:${utxo.outputIndex} not found`);
+            throw new Error('UTXO not found or missing output');
         }
-        return txInfo.vout[utxo.outputIndex];
+
+        const outputInfo = txInfo.vout[utxo.outputIndex];
+        
+        // For non-main coin UTXOs, require currencyvalues (check for symbol, id, or currencyname)
+        if (currency && currency !== store.getters['network/mainCoin']) {
+            const currencyId = CURRENCY_IDS[currency] || currency;
+            let hasCurrency = false;
+            if (utxo.currencyvalues) {
+                for (const [id, value] of Object.entries(utxo.currencyvalues)) {
+                    if (
+                        id === currency ||
+                        id === currencyId ||
+                        (value && typeof value === 'object' && value.currencyname === currency)
+                    ) {
+                        hasCurrency = true;
+                        break;
+                    }
+                }
+            }
+            if (!hasCurrency) {
+                throw new Error(`UTXO does not contain ${currency}`);
+            }
+        }
+        // For main coin, require value
+        if ((!currency || currency === store.getters['network/mainCoin']) && (!outputInfo.value || outputInfo.value === 0)) {
+            throw new Error(`UTXO has zero value for ${currency || store.getters['network/mainCoin']}`);
+        }
+        
+        return outputInfo;
     } catch (error) {
         console.error('Error verifying UTXO:', error);
+        throw new Error(`UTXO verification failed: ${error.message}`);
+    }
+}
+
+/**
+ * Refreshes the UTXO set for an address to ensure we're using the latest data
+ * @param {string} address - The address to refresh UTXOs for
+ * @returns {Promise<Array>} - Fresh UTXOs for the address
+ */
+async function refreshUtxos(address) {
+    try {
+        console.log(`Refreshing UTXOs for address: ${address}`);
+        
+        // Get fresh UTXO data
+        const utxos = await makeRPCCall('getaddressutxos', [{
+            addresses: [address],
+            currencynames: true
+        }]);
+        
+        if (!utxos || utxos.length === 0) {
+            console.log('No UTXOs found after refresh');
+            return [];
+        }
+        
+        console.log(`Found ${utxos.length} UTXOs after refresh`);
+        
+        // Verify each UTXO is actually unspent
+        const confirmedUtxos = [];
+        for (const utxo of utxos) {
+            try {
+                // This will throw if the UTXO doesn't exist or is spent
+                const txData = await makeRPCCall('getrawtransaction', [utxo.txid, 1]);
+                if (txData && txData.vout && txData.vout[utxo.outputIndex]) {
+                    confirmedUtxos.push(utxo);
+                }
+            } catch (error) {
+                console.warn(`Skipping invalid UTXO: ${utxo.txid}:${utxo.outputIndex}`, error.message);
+            }
+        }
+        
+        console.log(`Confirmed ${confirmedUtxos.length} valid UTXOs`);
+        return confirmedUtxos;
+    } catch (error) {
+        console.error('Error refreshing UTXOs:', error);
         throw error;
     }
 }
@@ -421,12 +563,6 @@ async function verifyUtxo(utxo) {
 async function sendCurrency(fromAddressOrParams, toAddress, amount, privateKey, currency) {
     let params;
     let selectedUtxos = [];
-    const networkInfo = await makeRPCCall('getinfo', []);
-    console.log('Network info:', networkInfo);
-    
-    // Log all available currencies
-    const allCurrencies = await makeRPCCall('listcurrencies', []);
-    console.log('Available currencies:', allCurrencies?.map(c => c.currencyname || c.name));
     
     if (typeof fromAddressOrParams === 'object') {
         params = fromAddressOrParams;
@@ -500,11 +636,8 @@ async function sendCurrency(fromAddressOrParams, toAddress, amount, privateKey, 
         const amountSats = toSatoshis(params.amount);
         console.log('Amount in satoshis:', amountSats);
 
-        // Get fresh UTXO data
-        const utxos = await makeRPCCall('getaddressutxos', [{
-            addresses: [resolvedFromAddress],
-            currencynames: true
-        }]);
+        // Refresh UTXOs to make sure we have the latest data
+        const utxos = await refreshUtxos(resolvedFromAddress);
 
         if (!utxos || utxos.length === 0) {
             throw new Error('No UTXOs available');
@@ -576,26 +709,11 @@ async function sendCurrency(fromAddressOrParams, toAddress, amount, privateKey, 
         
         console.log(`Found ${currencyUtxos.length} UTXOs for ${params.currency}`);
 
-        // Verify each UTXO is actually unspent before using it
-        const confirmedUnspentUtxos = [];
-        for (const utxo of currencyUtxos) {
-            try {
-                // This will throw an error if the UTXO doesn't exist or is spent
-                await verifyUtxo(utxo);
-                confirmedUnspentUtxos.push(utxo);
-            } catch (error) {
-                console.warn(`Skipping spent or invalid UTXO: ${utxo.txid}:${utxo.outputIndex}`, error.message);
-                // Continue to next UTXO
-            }
-        }
-        
-        console.log(`${confirmedUnspentUtxos.length} of ${currencyUtxos.length} UTXOs are confirmed unspent`);
-        
-        if (confirmedUnspentUtxos.length === 0) {
-            throw new Error(`No unspent UTXOs available for ${params.currency}`);
+        if (currencyUtxos.length === 0) {
+            throw new Error(`No UTXOs available for ${params.currency}`);
         }
 
-        for (const utxo of confirmedUnspentUtxos) {
+        for (const utxo of currencyUtxos) {
             if (currencyTotal < amountSats) {
                 selectedUtxos.push(utxo);
                 txBuilder.addInput(utxo.txid, utxo.outputIndex);
@@ -613,18 +731,11 @@ async function sendCurrency(fromAddressOrParams, toAddress, amount, privateKey, 
             
             console.log(`Found ${feeUtxos.length} UTXOs for fees (${mainCoin})`);
             
-            // Verify fee UTXOs are unspent
-            const confirmedFeeUtxos = [];
-            for (const utxo of feeUtxos) {
-                try {
-                    await verifyUtxo(utxo);
-                    confirmedFeeUtxos.push(utxo);
-                } catch (error) {
-                    console.warn(`Skipping spent or invalid fee UTXO: ${utxo.txid}:${utxo.outputIndex}`, error.message);
-                }
+            if (feeUtxos.length === 0) {
+                throw new Error(`No UTXOs available for fees (${mainCoin})`);
             }
 
-            for (const utxo of confirmedFeeUtxos) {
+            for (const utxo of feeUtxos) {
                 if (feeTotal < feeSats) {
                     selectedUtxos.push(utxo);
                     txBuilder.addInput(utxo.txid, utxo.outputIndex);
@@ -645,26 +756,24 @@ async function sendCurrency(fromAddressOrParams, toAddress, amount, privateKey, 
         // Add recipient output with appropriate script
         if (!isMainCoin) {
             try {
-                const currencyScript = createCurrencyOutputScript(resolvedToAddress, currencyId);
-                if (!currencyScript) {
-                    throw new Error(`Failed to create output script for ${params.currency}`);
-                }
-                console.log('Currency script created:', currencyScript);
-                
-                // Add the output using the P2SH script
-                txBuilder.addOutput(currencyScript.p2shScript, amountSats);
+                // For token transactions, use standard P2PKH outputs just like main coin
+                // The difference is that we need to track which UTXOs contain which currencies
+                txBuilder.addOutput(resolvedToAddress, amountSats);
                 
                 // Add change output if needed
                 const currencyChange = currencyTotal - amountSats;
                 if (currencyChange > DUST_THRESHOLD) {
-                    const changeScript = createCurrencyOutputScript(resolvedFromAddress, currencyId);
-                    if (changeScript) {
-                        console.log('Change script created:', changeScript);
-                        txBuilder.addOutput(changeScript.p2shScript, currencyChange);
-                    }
+                    txBuilder.addOutput(resolvedFromAddress, currencyChange);
+                }
+                
+                // When sending tokens, we need to add a fee output from the main coin UTXO
+                // This is the main coin change output
+                const mainCoinChange = feeTotal - feeSats;
+                if (mainCoinChange > DUST_THRESHOLD) {
+                    txBuilder.addOutput(resolvedFromAddress, mainCoinChange);
                 }
             } catch (error) {
-                console.error('Error creating currency outputs:', error);
+                console.error('Error creating token outputs:', error);
                 throw error;
             }
         } else {
@@ -722,19 +831,35 @@ async function sendCurrency(fromAddressOrParams, toAddress, amount, privateKey, 
         // Sign all inputs
         for (let i = 0; i < selectedUtxos.length; i++) {
             const utxo = selectedUtxos[i];
-            const value = getCurrencyValueFromUtxo(utxo, isMainCoin ? mainCoin : params.currency);
+            let value;
             
-            try {
-                if (!isMainCoin && utxo.script) {
-                    console.log('Signing with script:', utxo.script);
+            // For token UTXOs, we need to use the correct script and value
+            if (!isMainCoin && utxo.currencyvalues && Object.keys(utxo.currencyvalues).length > 0) {
+                // For token UTXOs, use the token value
+                value = getCurrencyValueFromUtxo(utxo, params.currency);
+                console.log(`Signing token input with value: ${value}`);
+                
+                try {
+                    // For token UTXOs, we need to use the standard P2PKH script
+                    // The key is to use the correct value for signing
                     txBuilder.sign(
                         i,
                         keyPair,
-                        Buffer.from(utxo.script, 'hex'),
+                        null, // Use standard P2PKH script
                         Transaction.SIGHASH_ALL,
                         value
                     );
-                } else {
+                } catch (error) {
+                    console.error('Error signing token input:', error, 'Input index:', i, 'UTXO:', utxo);
+                    throw error;
+                }
+            } else {
+                // For main coin UTXOs, use the satoshis value
+                value = utxo.satoshis || 0;
+                console.log(`Signing main coin input with value: ${value}`);
+                
+                try {
+                    // Standard signing for main coin UTXOs
                     txBuilder.sign(
                         i,
                         keyPair,
@@ -742,10 +867,10 @@ async function sendCurrency(fromAddressOrParams, toAddress, amount, privateKey, 
                         Transaction.SIGHASH_ALL,
                         value
                     );
+                } catch (error) {
+                    console.error('Error signing main coin input:', error, 'Input index:', i, 'UTXO:', utxo);
+                    throw error;
                 }
-            } catch (error) {
-                console.error('Error signing input:', error, 'Input index:', i);
-                throw error;
             }
         }
 
@@ -759,33 +884,90 @@ async function sendCurrency(fromAddressOrParams, toAddress, amount, privateKey, 
             outputs: tx.outs,
             hex: txHex
         });
+        
+        // Enhanced debugging - print full transaction hex
+        console.log('Full transaction hex:', txHex);
+        
+        // Print detailed output information
+        console.log('Detailed outputs:');
+        tx.outs.forEach((output, index) => {
+            console.log(`Output ${index}:`, {
+                value: output.value,
+                scriptPubKey: output.script.toString('hex')
+            });
+        });
+
+        // Perform final verification of UTXOs before broadcast
+        const currencyMap = buildUtxoCurrencyMap(selectedUtxos, mainCoin);
+        if (!await performFinalUtxoVerification(selectedUtxos, mainCoin, currencyMap)) {
+            throw new Error('Final UTXO verification failed, aborting broadcast');
+        }
 
         try {
-            const txid = await makeRPCCall('sendrawtransaction', [txHex]);
-            console.log('Transaction sent:', txid);
-
-            const transactionData = {
-                txid,
-                type: 'sent',
-                amount: params.amount,
-                currency: params.currency,
-                from: params.fromAddress,
-                to: params.toAddress,
-                resolvedFrom: resolvedFromAddress,
-                resolvedTo: resolvedToAddress,
-                timestamp: new Date().toISOString(),
-                status: 'pending',
-                isFromVerusId: isVerusID(params.fromAddress),
-                isToVerusId: isVerusID(params.toAddress)
-            };
+            // Add more detailed error handling for RPC calls
+            console.log('Sending raw transaction to network...');
             
-            store.dispatch('transactions/addTransaction', transactionData);
-            console.log('Transaction stored:', transactionData);
-
-            return { txid };
+            // For token transactions, we need to modify the transaction before sending
+            if (!isMainCoin) {
+                // Add token data to the transaction
+                const currencyId = await getCurrencyId(params.currency);
+                
+                // Log the transaction with token data for debugging
+                console.log('Sending token transaction with currency ID:', currencyId);
+                console.log('Token amount:', amountSats);
+            }
+            
+            // Get detailed error information if available
+            try {
+                const txid = await makeRPCCall('sendrawtransaction', [txHex]);
+                console.log('Transaction sent successfully:', txid);
+                
+                // Enhanced error handling - catch and log any RPC errors
+                if (txid && txid.error) {
+                    console.error('RPC error sending transaction:', txid.error);
+                    throw new Error(`RPC error sending transaction: ${txid.error.message}`);
+                }
+                
+                const transactionData = {
+                    txid,
+                    type: 'sent',
+                    amount: params.amount,
+                    currency: params.currency,
+                    from: params.fromAddress,
+                    to: params.toAddress,
+                    resolvedFrom: resolvedFromAddress,
+                    resolvedTo: resolvedToAddress,
+                    timestamp: new Date().toISOString(),
+                    status: 'pending',
+                    isFromVerusId: isVerusID(params.fromAddress),
+                    isToVerusId: isVerusID(params.toAddress)
+                };
+                
+                // Store the transaction in the transaction history
+                try {
+                    if (typeof store !== 'undefined' && store.dispatch) {
+                        store.dispatch('transactions/addTransaction', transactionData);
+                        console.log('Transaction stored:', transactionData);
+                    }
+                } catch (storeError) {
+                    console.warn('Could not store transaction in history:', storeError);
+                }
+                
+                return { txid };
+            } catch (error) {
+                // Try to get more detailed error information
+                console.error('Error sending transaction:', error);
+                
+                // If we have a specific error message, include it
+                if (error.message) {
+                    throw new Error(`Failed to send transaction: ${error.message}`);
+                } else {
+                    throw new Error('Failed to send transaction: RPC call failed');
+                }
+            }
         } catch (error) {
-            console.error('RPC sendrawtransaction error:', error);
-            throw new Error(`Failed to broadcast transaction: ${error.message}`);
+            console.error('Error in sendCurrency:', error);
+            throw error;
         }
     } catch (error) {
         console.error('Error in sendCurrency:', error);
@@ -972,10 +1154,29 @@ async function sendConvertCurrency(fromAddressOrParams, toAddress, amount, priva
 
         console.log('Serialized transaction:', serializedTx);
 
-        const txid = await makeRPCCall('sendrawtransaction', [serializedTx]);
-        console.log('Convert transaction sent:', txid);
+        // Perform final verification of UTXOs before broadcast
+        const currencyMap = buildUtxoCurrencyMap(relevantUtxos, store.getters['network/mainCoin']);
+        if (!await performFinalUtxoVerification(relevantUtxos, store.getters['network/mainCoin'], currencyMap)) {
+            throw new Error('Final UTXO verification failed, aborting broadcast');
+        }
 
-        return txid;
+        try {
+            // Add more detailed error handling for RPC calls
+            console.log('Sending raw transaction to network...');
+            const txid = await makeRPCCall('sendrawtransaction', [serializedTx]);
+            console.log('Convert transaction sent successfully:', txid);
+            
+            // Enhanced error handling - catch and log any RPC errors
+            if (txid && txid.error) {
+                console.error('RPC error sending transaction:', txid.error);
+                throw new Error(`RPC error sending transaction: ${txid.error.message}`);
+            }
+            
+            return txid;
+        } catch (error) {
+            console.error('Error in sendConvertCurrency:', error);
+            throw error;
+        }
     } catch (error) {
         console.error('Error in sendConvertCurrency:', error);
         throw error;
@@ -1049,6 +1250,123 @@ function validateAddress(address) {
     }
 }
 
+/**
+ * Performs final verification of all UTXOs in a transaction before broadcast 
+ * to ensure they haven't been spent since initial selection
+ * @param {Array} utxos - List of UTXOs used in the transaction
+ * @param {string} mainCurrency - Main currency symbol (like 'VRSCTEST')
+ * @param {Object} currencyMap - Mapping of which UTXOs are used for which currencies
+ * @returns {Promise<boolean>} - True if all UTXOs are still valid
+ */
+async function performFinalUtxoVerification(utxos, mainCurrency, currencyMap = {}) {
+    try {
+        console.log('Performing final UTXO verification before broadcast...');
+        for (const utxo of utxos) {
+            // Determine which currency this UTXO is being used for
+            let currency = mainCurrency;
+            if (currencyMap && typeof currencyMap === 'object' && utxo.txid && utxo.outputIndex !== undefined) {
+                const key = `${utxo.txid}:${utxo.outputIndex}`;
+                if (currencyMap[key]) currency = currencyMap[key];
+            }
+            try {
+                // Only require currencyvalues for non-main coin UTXOs
+                if (currency !== mainCurrency) {
+                    const currencyId = CURRENCY_IDS[currency] || currency;
+                    let hasCurrency = false;
+                    if (utxo.currencyvalues) {
+                        for (const [id, value] of Object.entries(utxo.currencyvalues)) {
+                            if (
+                                id === currency ||
+                                id === currencyId ||
+                                (value && typeof value === 'object' && value.currencyname === currency)
+                            ) {
+                                hasCurrency = true;
+                                break;
+                            }
+                        }
+                    }
+                    if (!hasCurrency) {
+                        throw new Error(`UTXO does not contain any currency values for ${currency}`);
+                    }
+                } else {
+                    // For main coin, just check satoshis
+                    if (typeof utxo.satoshis !== 'number' || utxo.satoshis <= 0) {
+                        throw new Error(`UTXO has zero value for ${currency}`);
+                    }
+                }
+                console.log(`UTXO ${utxo.txid.substring(0, 10)}...${utxo.outputIndex} still valid for ${currency}`);
+            } catch (error) {
+                console.error(`UTXO ${utxo.txid.substring(0, 10)}...${utxo.outputIndex} verification failed:`, error.message);
+                return false;
+            }
+        }
+        console.log('All UTXOs verified successfully');
+        return true;
+    } catch (error) {
+        console.error('Error during final UTXO verification:', error);
+        return false;
+    }
+}
+
+/**
+ * Automatically retries transaction creation with fresh UTXOs if initial attempt fails
+ * @param {Object} params - Transaction parameters
+ * @param {boolean} isConversion - Whether this is a conversion transaction
+ * @param {number} maxRetries - Maximum number of retry attempts
+ * @returns {Promise<Object>} - Transaction result with txid
+ */
+async function executeTransactionWithRetry(params, isConversion = false, maxRetries = 2) {
+    let lastError;
+    
+    for (let attempt = 0; attempt <= maxRetries; attempt++) {
+        try {
+            if (attempt > 0) {
+                console.log(`Retry attempt ${attempt}/${maxRetries} for ${params.currency} transaction`);
+                
+                // Refresh UTXO data from the blockchain for retry attempts
+                const freshUtxos = await makeRPCCall('getaddressutxos', [{
+                    addresses: [params.fromAddress],
+                    currencynames: true
+                }]);
+                
+                if (!freshUtxos || freshUtxos.length === 0) {
+                    throw new Error(`No UTXOs available on retry attempt ${attempt}`);
+                }
+                
+                console.log(`Found ${freshUtxos.length} UTXOs for retry attempt`);
+            }
+            
+            // Execute the appropriate transaction type
+            if (isConversion) {
+                return await sendConvertCurrency(params);
+            } else {
+                return await sendCurrency(params);
+            }
+        } catch (error) {
+            lastError = error;
+            
+            // Only retry for specific errors that might be resolved with fresh UTXOs
+            if (error.message && (
+                error.message.includes('bad-txns-inputs-spent') || 
+                error.message.includes('UTXO verification failed') ||
+                error.message.includes('No unspent UTXOs available')
+            )) {
+                console.log(`Recoverable error detected, will retry: ${error.message}`);
+                // Wait a short time before retry to allow blockchain state to update
+                await new Promise(resolve => setTimeout(resolve, 1000));
+                continue;
+            } else {
+                // For other errors, don't retry
+                console.error('Non-recoverable error, will not retry:', error);
+                throw error;
+            }
+        }
+    }
+    
+    // If we've exhausted all retries, throw the last error
+    throw new Error(`Transaction failed after ${maxRetries} retry attempts: ${lastError.message}`);
+}
+
 export {
     sendCurrency,
     sendConvertCurrency,
@@ -1065,5 +1383,7 @@ export {
     IS_GATEWAY_FLAG,
     IS_TOKEN_FLAG,
     IS_FRACTIONAL_FLAG,
-    IS_PBAAS_CHAIN
+    IS_PBAAS_CHAIN,
+    performFinalUtxoVerification,
+    executeTransactionWithRetry
 };

@@ -4,11 +4,11 @@ const bs58 = require('bs58');
 const crypto = require('crypto');
 
 // Static configuration
-const TEST_PRIVATE_KEY = 'UwpJqNV91Ezbv4YbdqPAzyT36scbWm9uaRmHqPVC3xa6u5KPJydD'; // Add your private key here
-const TEST_ADDRESS = 'RV2sJNR3Vi5nJT5h7AsNah7gPKTQaJ8e2L';
-const TEST_CURRENCY = 'VRSCTEST';  // The currency you want to convert from
-const TEST_CONVERT_TO = 'VETH';  // The currency you want to convert to
-const TEST_VIA_CURRENCY = 'BRIDGE.VETH';  // The intermediate currency for conversion
+const TEST_PRIVATE_KEY = ''; // Add your private key here
+// const TEST_ADDRESS = 'RV2sJNR3Vi5nJT5h7AsNah7gPKTQaJ8e2L';
+// const TEST_CURRENCY = 'VRSCTEST';  // The currency you want to convert from
+// const TEST_CONVERT_TO = 'VETH';  // The currency you want to convert to
+// const TEST_VIA_CURRENCY = 'BRIDGE.VETH';  // The intermediate currency for conversion
 
 // Network configuration for Verus
 const NETWORK = {
@@ -188,173 +188,173 @@ async function broadcastTransaction(txHex) {
         throw error;
     }
 }
-
-// --- Conversion Output Script Helper (ported from extension) ---
-function createCurrencyOutputScript(address, currencyId, flags = 0) {
+  // Also update the createCurrencyOutputScript function to ensure it's correctly formatted
+  function createCurrencyOutputScript(address, currencyId, viaCurrencyId = null, flags = 0) {
     // Validate address
     let decoded;
     try {
-        decoded = bs58.decode(address);
-        if (decoded.length !== 25) throw new Error('Invalid address length');
+      decoded = bs58.decode(address);
+      if (decoded.length !== 25) throw new Error('Invalid address length');
     } catch (e) { throw new Error('Invalid address: ' + e.message); }
-    const hash160 = decoded.slice(1, 21);
-    // Flags: 0x03 for currency + non-gateway
-    const scriptFlags = flags | 0x03;
-    // Handle currencyId (base58 or hex)
+    const recipientHash160 = decoded.slice(1, 21);
+  
+    // Prepare currencyId buffer (should be 20 bytes)
     let currencyIdBuffer;
-    if (currencyId.startsWith('i')) {
-        const decodedId = bs58.decode(currencyId);
-        currencyIdBuffer = decodedId.slice(1, 21);
+    if (typeof currencyId === 'string' && currencyId.startsWith('i')) {
+      currencyIdBuffer = addressToHash160(currencyId);
     } else {
-        currencyIdBuffer = Buffer.from(currencyId, 'hex');
+      currencyIdBuffer = Buffer.from(currencyId, 'hex');
     }
-    
-    // Build the conversion script
-    const scriptElements = [
-        Buffer.from([0xc0]), // OP_CONVERT
-        Buffer.from([0x04]), // Version
-        Buffer.from([scriptFlags]),
-        Buffer.from([0x01]), // Num outputs
-        Buffer.from([0x01]), // Output index
-        currencyIdBuffer,
-        Buffer.from([opcodes.OP_DUP]),
-        Buffer.from([opcodes.OP_HASH160]),
-        hash160,
-        Buffer.from([opcodes.OP_EQUALVERIFY]),
-        Buffer.from([opcodes.OP_CHECKSIG])
-    ];
-    const scriptBuffer = Buffer.concat(scriptElements);
-    
-    // Create P2SH script
-    const scriptHash = crypto.createHash('sha256').update(scriptBuffer).digest().slice(0, 20);
-    const p2shScript = script.compile([
-        opcodes.OP_HASH160,
-        scriptHash,
-        opcodes.OP_EQUAL
+    if (currencyIdBuffer.length !== 20) {
+      throw new Error('currencyIdBuffer must be 20 bytes');
+    }
+  
+    // Prepare viaCurrencyId buffer (should be 20 bytes if provided)
+    let viaCurrencyBuffer = null;
+    if (viaCurrencyId) {
+      if (typeof viaCurrencyId === 'string' && viaCurrencyId.startsWith('i')) {
+        viaCurrencyBuffer = addressToHash160(viaCurrencyId);
+      } else {
+        viaCurrencyBuffer = Buffer.from(viaCurrencyId, 'hex');
+      }
+      if (viaCurrencyBuffer.length !== 20) {
+        throw new Error('viaCurrencyBuffer must be 20 bytes');
+      }
+    }
+  
+    // Construct the conversion script
+    const scriptElements = [];
+    scriptElements.push(Buffer.from([0xc0])); // OP_CONVERT
+    scriptElements.push(Buffer.from([0x04])); // version
+    scriptElements.push(Buffer.from([flags])); // flags
+    scriptElements.push(Buffer.from([0x01])); // num outputs
+    scriptElements.push(Buffer.from([0x00])); // output index
+    scriptElements.push(currencyIdBuffer);    // destination currency
+    if (viaCurrencyBuffer) scriptElements.push(viaCurrencyBuffer); // via/bridge currency
+    scriptElements.push(recipientHash160);    // recipient
+  
+    const redeemScript = Buffer.concat(scriptElements);
+    const scriptHash = crypto.createHash('ripemd160')
+      .update(crypto.createHash('sha256').update(redeemScript).digest())
+      .digest();
+    const p2shScript = Buffer.concat([
+      Buffer.from([0xa9]), // OP_HASH160
+      Buffer.from([0x14]), // Push 20 bytes
+      scriptHash,          // <scriptHash> (20 bytes)
+      Buffer.from([0x87])  // OP_EQUAL
     ]);
-    
+  
     return {
-        scriptBuffer,
-        p2shScript
+      redeemScript,
+      p2shScript,
+      scriptHash,
+      type: 'conversion'
     };
-}
-
-// --- Updated conversion transaction builder ---
+  }
+  
 async function testConversionTransactionWithUTXO({ fromAddress, toAddress, amount, currency, convertTo, viaCurrency, privateKey }) {
     try {
-        privateKey = privateKey || TEST_PRIVATE_KEY;
-        
-        // Step 1: Get UTXOs
-        console.log(`Building transaction from ${fromAddress} to ${toAddress}`);
-        console.log(`Converting ${amount} ${currency} to ${convertTo}${viaCurrency ? ` via ${viaCurrency}` : ''}`);
-        
-        const utxos = await fetchUTXOs(fromAddress);
-        if (!utxos || utxos.length === 0) throw new Error('No UTXOs found');
-        
-        // Step 2: Select UTXOs
-        const fee = 0.0001;
-        const totalNeeded = amount + fee;
-        const selected = utxos.find(u => u.satoshis / SATS_PER_COIN >= totalNeeded);
-        if (!selected) throw new Error('No UTXO with sufficient funds');
-        
-        console.log('Selected UTXO:', {
-            txid: selected.txid.substring(0, 10) + '...',
-            vout: selected.outputIndex || selected.vout,
-            satoshis: selected.satoshis / SATS_PER_COIN
-        });
-        
-        // Create raw transaction with manual serialization to include versionGroupId
-        const tx = new Transaction();
-        tx.version = 4;
-        
-        // Add the input
-        tx.addInput(Buffer.from(selected.txid, 'hex').reverse(), selected.outputIndex || selected.vout);
-        
-        // Get conversion script
-        const currencyId = CURRENCY_IDS[convertTo] || convertTo;
-        console.log('Using currency ID for conversion:', currencyId);
-        const scriptInfo = createCurrencyOutputScript(toAddress, currencyId);
-        console.log('Created conversion script, length:', scriptInfo.p2shScript.length);
-        
-        // Add output with conversion script
-        tx.addOutput(scriptInfo.p2shScript, Math.round(amount * SATS_PER_COIN));
-        
-        // Add change output if needed
-        const change = selected.satoshis - Math.round((amount + fee) * SATS_PER_COIN);
-        if (change > 0) {
-            console.log('Adding change output:', change / SATS_PER_COIN);
-            
-            // Create standard P2PKH script for the change
-            const fromHash160 = addressToHash160(fromAddress);
-            const p2pkhScript = script.compile([
-                opcodes.OP_DUP,
-                opcodes.OP_HASH160,
-                fromHash160,
-                opcodes.OP_EQUALVERIFY,
-                opcodes.OP_CHECKSIG
-            ]);
-            
-            tx.addOutput(p2pkhScript, change);
-        }
-        
-        // Step 4: Sign the transaction
-        // Since we're building the tx manually, we need to sign it manually too
-        const keyPair = ECPair.fromWIF(privateKey, networks.verustest);
-        const fromPubKeyHash = addressToHash160(fromAddress);
-        
-        // Create the input script
-        const signatureHash = tx.hashForSignature(
-            0,  // Input index
-            script.compile([
-                opcodes.OP_DUP,
-                opcodes.OP_HASH160,
-                fromPubKeyHash,
-                opcodes.OP_EQUALVERIFY,
-                opcodes.OP_CHECKSIG
-            ]),
-            Transaction.SIGHASH_ALL
-        );
-        
-        // Sign the hash and create the signature script
-        const signature = keyPair.sign(signatureHash);
-        const signatureScript = script.compile([
-            Buffer.concat([
-                signature.toScriptSignature(Transaction.SIGHASH_ALL),
-                keyPair.getPublicKeyBuffer()
-            ])
-        ]);
-        
-        // Add the signature script to the input
-        tx.setInputScript(0, signatureScript);
-        
-        // Get the basic transaction hex
-        let txHex = tx.toHex();
-        
-        // IMPORTANT: We need to manually insert the version group ID
-        // Verus transactions require a version group ID (0x892f2085) after the version field
-        // The version is the first 4 bytes (8 hex chars), then we insert the version group ID
-        const VERSION_GROUP_ID = '85202f89'; // Little-endian format
-        txHex = txHex.substring(0, 8) + VERSION_GROUP_ID + txHex.substring(8);
-        
-        console.log('Transaction built and signed successfully');
-        console.log('Transaction hex (with versionGroupId):', txHex.substring(0, 64) + '...');
-        
-        // Step 5: Broadcast
-        console.log('Broadcasting transaction...');
-        const txid = await broadcastTransaction(txHex);
-        console.log('Transaction broadcast successful with txid:', txid);
-        
-        return { txid, hex: txHex };
+      privateKey = privateKey || TEST_PRIVATE_KEY;
+      
+      console.log(`Building transaction from ${fromAddress} to ${toAddress}`);
+      console.log(`Converting ${amount} ${currency} to ${convertTo}${viaCurrency ? ` via ${viaCurrency}` : ''}`);
+      
+      // Step 1: Get UTXOs
+      const utxos = await fetchUTXOs(fromAddress);
+      if (!utxos || utxos.length === 0) throw new Error('No UTXOs found');
+      
+      // Step 2: Select UTXOs
+      const fee = 0.0001;
+      const totalNeeded = amount + fee;
+      const selected = utxos.find(u => u.satoshis / SATS_PER_COIN >= totalNeeded);
+      if (!selected) throw new Error('No UTXO with sufficient funds');
+      
+      console.log('Selected UTXO:', {
+        txid: selected.txid.substring(0, 10) + '...',
+        vout: selected.outputIndex || selected.vout,
+        satoshis: selected.satoshis / SATS_PER_COIN
+      });
+      
+      // Create a properly configured transaction builder for Verus
+      const txBuilder = new TransactionBuilder(networks.verustest);
+      
+      // Set the version for Verus (transactions use version 4)
+      txBuilder.setVersion(4);
+      
+      // *** FIX: Add the version group ID through the proper API ***
+      // For Zcash-based coins, use setVersionGroupId
+      if (typeof txBuilder.setVersionGroupId === 'function') {
+        // Use the correct versionGroupId for Verus
+        txBuilder.setVersionGroupId(0x892f2085);
+      }
+      
+      // Add the input
+      txBuilder.addInput(selected.txid, selected.outputIndex || selected.vout);
+      
+      // Get currency IDs for conversion and via
+      const convertToId = getCurrencyId(convertTo);
+      console.log('Using currency ID for conversion:', convertToId);
+      
+      // Process via currency if specified
+      let viaCurrencyId = null;
+      if (viaCurrency) {
+        viaCurrencyId = getCurrencyId(viaCurrency);
+        console.log('Using via currency ID:', viaCurrencyId);
+      }
+      
+      // Create conversion script
+      console.log('Creating conversion script...');
+      const scriptInfo = createCurrencyOutputScript(toAddress, convertToId, viaCurrencyId);
+      console.log('Created conversion script');
+      
+      // *** FIX: Properly add output with the P2SH script ***
+      txBuilder.addOutput(scriptInfo.p2shScript, Math.round(amount * SATS_PER_COIN));
+      
+      // Add change output if needed
+      const change = selected.satoshis - Math.round((amount + fee) * SATS_PER_COIN);
+      if (change > 0) {
+        console.log('Adding change output:', change / SATS_PER_COIN);
+        txBuilder.addOutput(fromAddress, change);
+      }
+      
+      // *** FIX: Properly sign the transaction with the Zcash signature hash type ***
+      const keyPair = ECPair.fromWIF(privateKey, networks.verustest);
+      
+      // For Zcash-based transactions, we need to use the correct hash type
+      // SIGHASH_ALL | SIGHASH_FORKID (0x41) is typically used for Zcash-based coins
+      const hashType = Transaction.SIGHASH_ALL | 0x40; // Add SIGHASH_FORKID
+      
+      txBuilder.sign(0, keyPair, null, Transaction.SIGHASH_ALL, selected.satoshis);
+      
+      // Build the transaction
+      const tx = txBuilder.build();
+      
+      // Get transaction hex
+      const txHex = tx.toHex();
+      
+      console.log('Transaction built and signed successfully');
+      console.log('Transaction hex:', txHex.substring(0, 64) + '...');
+      
+      // Broadcast transaction
+      console.log('Broadcasting transaction...');
+      const txid = await broadcastTransaction(txHex);
+      console.log('Transaction broadcast successful with txid:', txid);
+      
+      return { txid, hex: txHex };
     } catch (e) {
-        console.error('Conversion transaction failed:', e);
-        throw e;
+      console.error('Conversion transaction failed:', e);
+      throw e;
     }
-}
+  }
+  
+
+
 
 // Export functions for use in other modules
 module.exports = {
     fetchUTXOs,
     broadcastTransaction,
     testConversionTransactionWithUTXO,
-    TEST_PRIVATE_KEY
+    TEST_PRIVATE_KEY,
+    makeRPCCall
 };
