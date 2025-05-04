@@ -946,13 +946,20 @@ async function sendCurrency(fromAddressOrParams, toAddress, amount, privateKey, 
                 // Store the transaction in the transaction history
                 try {
                     if (typeof store !== 'undefined' && store.dispatch) {
+                        // Try to use Vuex store if available
                         store.dispatch('transactions/addTransaction', transactionData);
-                        console.log('Transaction stored:', transactionData);
+                        console.log('Transaction stored via Vuex:', transactionData);
+                    } else {
+                        // Fallback to direct browser storage if store isn't available
+                        console.log('Store not available, using direct storage');
+                        storeTransactionDirectly(transactionData);
                     }
                 } catch (storeError) {
-                    console.warn('Could not store transaction in history:', storeError);
+                    console.warn('Could not store transaction in Vuex:', storeError);
+                    // Try direct storage as fallback
+                    storeTransactionDirectly(transactionData);
                 }
-                
+
                 return { txid };
             } catch (error) {
                 // Try to get more detailed error information
@@ -1367,6 +1374,37 @@ async function executeTransactionWithRetry(params, isConversion = false, maxRetr
     throw new Error(`Transaction failed after ${maxRetries} retry attempts: ${lastError.message}`);
 }
 
+// Helper function to store transaction directly to browser storage
+// when Vuex store is not available
+async function storeTransactionDirectly(transaction) {
+    try {
+        // Add timestamp if not present
+        if (!transaction.timestamp) {
+            transaction.timestamp = new Date().toISOString();
+        }
+        
+        // Get existing transactions
+        const storage = chrome.storage?.local || browser?.storage?.local;
+        if (!storage) {
+            console.error('Browser storage not available');
+            return;
+        }
+        
+        const { transactions = [] } = await storage.get('transactions');
+        
+        // Check if transaction already exists to avoid duplicates
+        if (!transactions.some(tx => tx.txid === transaction.txid)) {
+            transactions.push(transaction);
+            await storage.set({ transactions });
+            console.log('Transaction stored directly:', transaction);
+        } else {
+            console.log('Transaction already exists in storage');
+        }
+    } catch (error) {
+        console.error('Failed to store transaction directly:', error);
+    }
+}
+
 export {
     sendCurrency,
     sendConvertCurrency,
@@ -1385,5 +1423,6 @@ export {
     IS_FRACTIONAL_FLAG,
     IS_PBAAS_CHAIN,
     performFinalUtxoVerification,
-    executeTransactionWithRetry
+    executeTransactionWithRetry,
+    storeTransactionDirectly
 };

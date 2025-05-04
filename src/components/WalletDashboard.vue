@@ -28,6 +28,13 @@
                 </button>
                 <button 
                     class="tab-button" 
+                    :class="{ active: activeTab === 'transactions' }"
+                    @click="activeTab = 'transactions'"
+                >
+                    Transactions
+                </button>
+                <button 
+                    class="tab-button" 
                     :class="{ active: activeTab === 'nfts' }"
                     @click="activeTab = 'nfts'"
                 >
@@ -85,6 +92,24 @@
 
             <div v-else-if="activeTab === 'nfts'" class="nft-section">
                 <NFTGallery />
+            </div>
+
+            <div v-else-if="activeTab === 'transactions'" class="transactions-section">
+                <TransactionHistory :currency="selectedCurrencyForTransactions" />
+                
+                <div class="currency-selector-container">
+                    <label for="transactionCurrencySelector">View transactions for:</label>
+                    <select 
+                        id="transactionCurrencySelector" 
+                        v-model="selectedCurrencyForTransactions"
+                        class="currency-selector"
+                    >
+                        <option value="all">All Currencies</option>
+                        <option v-for="currency in selectedCurrencies" :key="currency" :value="currency">
+                            {{ currency }}
+                        </option>
+                    </select>
+                </div>
             </div>
 
             <div v-else-if="activeTab === 'identities'" class="identity-section">
@@ -202,6 +227,7 @@ import LoadingBar from './LoadingBar.vue';
 import Settings from './Settings.vue';
 import CurrencySelector from './CurrencySelector.vue';
 import NFTGallery from './NFTGallery.vue';
+import TransactionHistory from './TransactionHistory.vue';
 import { sendCurrency, estimateFee, validateAddress } from '../utils/transaction';
 
 export default {
@@ -213,6 +239,7 @@ export default {
         Settings,
         CurrencySelector,
         NFTGallery,
+        TransactionHistory,
     },
 
     setup() {
@@ -231,6 +258,7 @@ export default {
         const estimatedFee = ref(0);
         const receiveQrCode = ref('');
         const activeTab = ref('currencies');
+        const selectedCurrencyForTransactions = ref('all');
 
         const walletLoading = computed(() => store.state.wallet.loading);
         const walletError = computed(() => store.state.wallet.error);
@@ -508,7 +536,8 @@ export default {
             executeSend,
             updateEstimatedFee,
             getAddressForCurrency,
-            navigateToCurrencyDetails
+            navigateToCurrencyDetails,
+            selectedCurrencyForTransactions,
         };
     }
 };
@@ -916,5 +945,23 @@ export default {
     background: #fff;
     border-radius: 8px;
     box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+}
+
+.transactions-section {
+    padding: 1rem;
+}
+
+.currency-selector-container {
+    margin-top: 1rem;
+    padding: 1rem;
+    background-color: #f5f5f5;
+    border-radius: 8px;
+}
+
+.currency-selector {
+    width: 100%;
+    padding: 8px;
+    border: 1px solid #ddd;
+    border-radius: 4px;
 }
 </style>
