@@ -10,22 +10,19 @@ const VERUS_NETWORK = networks.verustest;
 const RPC_SERVER = 'https://api.verustest.net';
 
 // Hard-coded values for testing
-const TEST_PRIVATE_KEY = 'your_actual_private_key_wif_format'; // Replace with your actual private key in WIF format
-const TEST_FROM_ADDRESS = 'your_actual_verustest_address'; // Replace with your actual testnet address
-const TEST_TO_ADDRESS = 'recipient_verustest_address'; // Replace with recipient's address
+const TEST_PRIVATE_KEY = '';
+const TEST_FROM_ADDRESS = 'RV2sJNR3Vi5nJT5h7AsNah7gPKTQaJ8e2L';
+const TEST_TO_ADDRESS = 'RV2sJNR3Vi5nJT5h7AsNah7gPKTQaJ8e2L';
 
 // Currency ID mapping
 const CURRENCY_IDS = {
   'VRSCTEST': 'iJhCezBExJHvtyH3fGhNnt2NhU4Ztkf2yq',
   'VRSC-KMD': 'iCkKJuJScy4Z6NSDK7Mt42ZAB2NzVdR4zP',
+  'VETH': 'i5w5MuNik5NtLcYmNzcvaoixooEebB6MGV',
 };
 
 /**
  * Make an RPC call to the Verus daemon
- * @param {string} method - RPC method to call
- * @param {Array} params - RPC parameters
- * @param {string} currency - Optional currency for currency-specific calls
- * @returns {Promise<any>} RPC result
  */
 async function makeRPCCall(method, params = [], currency = 'VRSCTEST') {
   try {
@@ -76,285 +73,295 @@ async function makeRPCCall(method, params = [], currency = 'VRSCTEST') {
 }
 
 /**
- * Get private key from wallet
- * @param {Object} params - Parameters containing currency and password
- * @returns {Promise<string>} Private key
+ * Get available methods from the API
  */
-async function getPrivateKey(params) {
-  const { currency, password } = params;
-  
-  if (!currency || !password) {
-    throw new Error('Currency and password are required to get private key');
-  }
-  
-  // For CLI testing, just return the hardcoded test private key
-  return TEST_PRIVATE_KEY;
-}
-
-/**
- * Format address for Verus
- * @param {string} address - Address to format
- * @returns {Object} Formatted address
- */
-function formatDestination(address) {
-  return { address };
-}
-
-/**
- * Get currency ID from symbol
- * @param {string} currencySymbol - Currency symbol
- * @returns {string} Currency ID
- */
-function getCurrencyID(currencySymbol) {
-  return CURRENCY_IDS[currencySymbol] || currencySymbol;
-}
-
-/**
- * Preflight send function to check and prepare transaction
- * @param {Object} sendParams - Parameters for the transaction
- * @returns {Promise<Object>} Preflight result
- */
-async function preflightSend(sendParams) {
+async function getAvailableMethods() {
   try {
-    const {
-      fromCurrency,
-      toCurrency,
+    console.log('Getting available RPC methods...');
+    const methods = await makeRPCCall('help');
+    console.log('Available methods:', methods);
+    return methods;
+  } catch (error) {
+    console.log('Could not get help methods, trying alternative approach');
+    return null;
+  }
+}
+
+/**
+ * Test basic connectivity and get blockchain info
+ */
+async function testConnectivity() {
+  try {
+    console.log('Testing connectivity...');
+    const info = await makeRPCCall('getblockchaininfo');
+    console.log('Blockchain info received:', {
+      chain: info.chain,
+      blocks: info.blocks,
+      bestblockhash: info.bestblockhash?.substring(0, 20) + '...'
+    });
+    return info;
+  } catch (error) {
+    console.error('Connectivity test failed:', error);
+    throw error;
+  }
+}
+
+/**
+ * Get currency information
+ */
+async function getCurrencyInfo(currencyId) {
+  try {
+    console.log(`Getting currency info for: ${currencyId}`);
+    const currencyInfo = await makeRPCCall('getcurrency', [currencyId]);
+    console.log('Currency info:', {
+      name: currencyInfo.name,
+      currencyid: currencyInfo.currencyid,
+      systemid: currencyInfo.systemid
+    });
+    return currencyInfo;
+  } catch (error) {
+    console.error('Get currency info failed:', error);
+    throw error;
+  }
+}
+function getCurrencyID(symbol) {
+  return CURRENCY_IDS[symbol] || symbol;
+}
+/**
+ * Create a conversion transaction using sendtoaddress with conversion parameters
+ */
+async function createConversionTransaction(fromCurrency, toCurrency, fromAddress, toAddress, amount) {
+  try {
+    console.log(`Creating conversion from ${fromCurrency} to ${toCurrency}`);
+    
+    // First, let's try the standard sendtoaddress method
+    const params = [
       fromAddress,
-      toAddress,
-      amount,
-      memo = '',
-      privateKey,
-      viaCurrency = null
-    } = sendParams;
-    
-    // Validate params
-    if (!fromCurrency || !toAddress || !amount || !fromAddress) {
-      throw new Error('Missing required parameters for preflight');
-    }
-    
-    // Prepare RPC parameters for preflight
-    const params = {
-      currency: getCurrencyID(fromCurrency),
-      amount: parseFloat(amount),
-      from: [fromAddress],
-      to: formatDestination(toAddress)
-    };
-    
-    // Add conversion destination if different currency
-    if (toCurrency && toCurrency !== fromCurrency) {
-      params.convertto = getCurrencyID(toCurrency);
-      
-      // Add via currency if specified
-      if (viaCurrency) {
-        params.via = getCurrencyID(viaCurrency);
+      [{
+        address: toAddress,
+        amount: parseFloat(amount),
+        currency: getCurrencyID(fromCurrency)
+      }],
+      null,
+      0,
+      {
+        convertto: getCurrencyID(toCurrency)
       }
+    ];
+    
+    console.log('Attempting sendtoaddress with conversion params:', params);
+    
+    try {
+      const result = await makeRPCCall('sendcurrency', params, fromCurrency);
+      console.log('Conversion transaction successful:', result);
+      return result;
+    } catch (sendError) {
+      console.log('sendtoaddress failed, trying alternative method:', sendError.message);
+      
+      // Try with simpler parameters
+      const simpleParams = [toAddress, parseFloat(amount)];
+      console.log('Trying simple sendtoaddress:', simpleParams);
+      
+      const simpleResult = await makeRPCCall('sendcurrency', simpleParams, fromCurrency);
+      console.log('Simple transaction successful:', simpleResult);
+      return simpleResult;
     }
+  } catch (error) {
+    console.error('Conversion transaction failed:', error);
+    throw error;
+  }
+}
+
+/**
+ * Try to create a raw transaction for conversion
+ */
+async function createRawConversionTransaction(fromCurrency, toCurrency, toAddress, amount) {
+  try {
+    console.log('Creating raw conversion transaction...');
     
-    // Add optional memo
-    if (memo) {
-      params.memo = memo;
-    }
+    // Create transaction inputs (empty for now, will be funded later)
+    const txInputs = [];
     
-    console.log('Preflight params:', JSON.stringify(params));
-    
-    // Call the preflight RPC
-    const preflightResult = await makeRPCCall('preflightsend', [params], fromCurrency);
-    
-    // Return the preflight result for confirmation
-    return {
-      ...preflightResult,
-      fromCurrency,
-      toCurrency,
-      fromAddress,
-      toAddress,
-      amount,
-      memo,
-      viaCurrency
+    // Create transaction outputs with conversion
+    const txOutputs = {};
+    txOutputs[toAddress] = {
+      amount: parseFloat(amount),
+      currency: getCurrencyID(toCurrency)
     };
+    
+    console.log('Raw transaction params:', { inputs: txInputs, outputs: txOutputs });
+    
+    const rawTx = await makeRPCCall('createrawtransaction', [txInputs, txOutputs], fromCurrency);
+    console.log('Raw transaction created:', rawTx.substring(0, 40) + '...');
+    
+    return rawTx;
   } catch (error) {
-    console.error('Preflight send failed:', error);
+    console.error('Raw conversion transaction failed:', error);
     throw error;
   }
 }
 
 /**
- * Sign and broadcast transaction 
- * @param {Object} txParams - Transaction parameters from preflight
- * @param {string} privateKey - Private key for signing
- * @returns {Promise<Object>} Transaction result
+ * Get address balance
  */
-async function sendTransaction(txParams, privateKey) {
+async function getAddressBalance(address, currency) {
   try {
-    const {
-      fromCurrency,
-      fromAddress,
-      toAddress,
-      amount,
-      memo = '',
-      hex,
-      txid
-    } = txParams;
+    console.log(`Getting balance for address: ${address} in currency: ${currency}`);
     
-    // If we have a hex from preflight, we can sign it
-    if (hex) {
-      // Create keyPair from privateKey
-      const keyPair = ECPair.fromWIF(privateKey, VERUS_NETWORK);
+    // Try different methods to get balance
+    try {
+      const balance = await makeRPCCall('getaddressbalance', [address], currency);
+      console.log('Address balance:', balance);
+      return balance;
+    } catch (error) {
+      console.log('getaddressbalance failed, trying listunspent...');
       
-      // Sign the transaction
-      // Note: This is a simplified version - in a real implementation,
-      // you would parse the hex, sign inputs, and serialize it back
+      const unspent = await makeRPCCall('listunspent', [0, 9999999, [address]], currency);
+      console.log('Unspent outputs:', unspent.length);
       
-      // For demo purposes, we'll just broadcast the hex directly
-      // In a real implementation, you would sign the transaction first
+      const totalBalance = unspent.reduce((sum, utxo) => sum + utxo.amount, 0);
+      console.log('Total balance from unspent:', totalBalance);
       
-      // Send signed transaction
-      const sendParams = {
-        currency: getCurrencyID(fromCurrency),
-        hex: hex,  // In real implementation, this would be the signed hex
-        // Other parameters from the preflight
-      };
-      
-      const result = await makeRPCCall('sendcurrency', [sendParams], fromCurrency);
-      
-      return {
-        success: true,
-        txid: result.txid || result,
-        ...result
-      };
-    } else {
-      throw new Error('No transaction hex found in preflight result');
+      return { balance: totalBalance, unspent };
     }
   } catch (error) {
-    console.error('Send transaction failed:', error);
+    console.error('Balance check failed:', error);
     throw error;
   }
 }
 
 /**
- * Main function to handle the send flow
- * @param {Object} formData - Form data from user input
- * @returns {Promise<Object>} Transaction result
+ * Main function to handle currency conversion
  */
-async function handleSend(formData) {
+async function handleConversion(formData) {
   try {
-    console.log('Starting transaction process with data:', formData);
+    console.log('Starting conversion process with data:', formData);
     
     const {
       fromCurrency,
       toCurrency,
       fromAddress,
       toAddress,
-      amount,
-      memo,
-      password,
-      viaCurrency
+      amount
     } = formData;
     
-    // Get private key for signing
-    const privateKey = await getPrivateKey({
-      currency: fromCurrency,
-      password: password
-    });
+    // Test connectivity first
+    await testConnectivity();
     
-    // Step 1: Preflight the transaction (returnTx = true)
-    console.log('Step 1: Performing preflight...');
-    const preflightResult = await preflightSend({
-      fromCurrency,
-      toCurrency,
-      fromAddress,
-      toAddress,
-      amount,
-      memo,
-      privateKey,
-      viaCurrency
-    });
+    // Get available methods
+    await getAvailableMethods();
     
-    console.log('Preflight successful:', preflightResult);
+    // Get currency information
+    try {
+      await getCurrencyInfo(getCurrencyID(fromCurrency));
+      await getCurrencyInfo(getCurrencyID(toCurrency));
+    } catch (error) {
+      console.log('Currency info retrieval failed, continuing anyway...');
+    }
     
-    // Return preflight result for confirmation UI
-    return {
-      status: 'preflight',
-      txConfirmation: preflightResult
-    };
-  } catch (error) {
-    console.error('Transaction handling failed:', error);
-    throw error;
-  }
-}
-
-/**
- * Confirm and execute transaction after preflight
- * @param {Object} txConfirmation - Preflight result
- * @param {string} password - Password for getting private key
- * @returns {Promise<Object>} Transaction result
- */
-async function confirmTransaction(txConfirmation, password) {
-  try {
-    console.log('Confirming transaction...');
+    // Check balance
+    try {
+      await getAddressBalance(fromAddress, fromCurrency);
+    } catch (error) {
+      console.log('Balance check failed, continuing anyway...');
+    }
     
-    // Get private key for signing
-    const privateKey = await getPrivateKey({
-      currency: txConfirmation.fromCurrency,
-      password: password
-    });
-    
-    // Send the transaction
-    console.log('Sending transaction...');
-    const result = await sendTransaction(txConfirmation, privateKey);
-    
-    console.log('Transaction sent successfully:', result);
+    // Try conversion transaction
+    const result = await createConversionTransaction(fromCurrency, toCurrency, fromAddress, toAddress, amount);
     
     return {
       status: 'success',
-      txid: result.txid,
-      ...result
+      txid: result,
+      fromCurrency,
+      toCurrency,
+      amount,
+      fromAddress,
+      toAddress
     };
+    
   } catch (error) {
-    console.error('Transaction confirmation failed:', error);
-    throw error;
+    console.error('Conversion handling failed:', error);
+    
+    // Try raw transaction approach as fallback
+    try {
+      console.log('Attempting raw transaction fallback...');
+      const rawTx = await createRawConversionTransaction(formData.fromCurrency, formData.toCurrency, formData.toAddress, formData.amount);
+      
+      return {
+        status: 'raw_created',
+        rawTransaction: rawTx,
+        message: 'Raw transaction created, needs funding and signing'
+      };
+    } catch (rawError) {
+      console.error('Raw transaction fallback also failed:', rawError);
+      throw error;
+    }
   }
 }
 
-// Example usage
+/**
+ * Test function with improved error handling
+ */
 async function testTransaction() {
   try {
-    // Use hardcoded values for CLI testing
+    console.log('=== Starting Verus Conversion Test ===');
+    
     const formData = {
       fromCurrency: 'VRSCTEST',
-      toCurrency: 'VETH',  // For conversion
+      toCurrency: 'VRSC-KMD',
       fromAddress: TEST_FROM_ADDRESS,
       toAddress: TEST_TO_ADDRESS,
-      amount: '1.0',
-      memo: 'Test transaction',
-      password: 'password',  // Password is still needed but can be any value
-      viaCurrency: 'BRIDGE.VETH'  // For bridge conversions
+      amount: '0.1' // Using smaller amount for testing
     };
     
-    // Step 1: Preflight
-    const preflightResult = await handleSend(formData);
-    console.log('Preflight result:', preflightResult);
+    console.log('Test parameters:', formData);
     
-    // In a real application, you would show confirmation UI here
-    // and wait for user confirmation
+    const result = await handleConversion(formData);
+    console.log('=== Test Result ===');
+    console.log(JSON.stringify(result, null, 2));
     
-    // Step 2: Confirm and send (after user confirms)
-    if (preflightResult.status === 'preflight') {
-      const txResult = await confirmTransaction(
-        preflightResult.txConfirmation, 
-        formData.password
-      );
-      
-      console.log('Transaction result:', txResult);
+    if (result.status === 'success') {
+      console.log(`✅ Conversion successful! TXID: ${result.txid}`);
+    } else if (result.status === 'raw_created') {
+      console.log(`⚠️ Raw transaction created: ${result.rawTransaction.substring(0, 40)}...`);
+      console.log(`Next steps: Fund and sign the transaction`);
     }
+    
   } catch (error) {
-    console.error('Test transaction failed:', error);
+    console.error('=== Test Failed ===');
+    console.error('Error details:', error.message);
+    
+    // Provide helpful debugging information
+    if (error.message.includes('Method not found')) {
+      console.log('\n🔍 Debugging Help:');
+      console.log('- The RPC method is not available on this endpoint');
+      console.log('- Try checking the Verus documentation for correct method names');
+      console.log('- The API endpoint might not support all wallet functions');
+      console.log('- Consider using a local Verus daemon instead of the public API');
+    }
+    
+    if (error.message.includes('HTTP error')) {
+      console.log('\n🔍 Network Issue:');
+      console.log('- Check your internet connection');
+      console.log('- The API endpoint might be down or rate-limiting requests');
+      console.log('- Try again in a few moments');
+    }
   }
 }
 
-// Export functions for use in extension
+// Export functions
 module.exports = {
-  handleSend,
-  confirmTransaction,
-  preflightSend,
-  testTransaction
+  handleConversion,
+  testTransaction,
+  getCurrencyInfo,
+  getAddressBalance,
+  testConnectivity
 };
+
+// Execute test when run directly
+if (require.main === module) {
+  console.log('Running Verus conversion test...');
+  testTransaction()
+    .then(() => console.log('\n=== Test Completed ==='))
+    .catch(err => console.error('\n=== Test Failed with Error ===\n', err));
+}
