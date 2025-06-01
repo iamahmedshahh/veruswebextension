@@ -60,6 +60,8 @@ const DEFAULT_FEE = 20000; // 0.0002 VRSC/VRSCTEST
 const DEFAULT_VIA_CURRENCY = 'SPORTS';
 const DEFAULT_CONVERT_TO = 'SAILING';
 const DUST_THRESHOLD = 546;
+const CURRENCY_CACHE = {};
+
 
 // Get network configuration based on current network state
 function getNetworkConfig() {
@@ -96,34 +98,59 @@ function getNetworkConfig() {
     }
 }
 
-// Currency ID cache - only used as a fallback
+// Currency ID cache with reverse mapping
 const CURRENCY_IDS = {};
 
 async function getCurrencyId(currencySymbol) {
     try {
         console.log(`Getting currency ID for: ${currencySymbol}`);
         
-        // Always try to get the latest currency ID from the RPC first
+        // First try the cache
+        if (CURRENCY_IDS[currencySymbol]) {
+            console.log(`Using cached currency ID for ${currencySymbol}:`, CURRENCY_IDS[currencySymbol]);
+            return CURRENCY_IDS[currencySymbol];
+        }
+        
+        // Then try RPC call
         try {
             console.log(`Making RPC call for currency: ${currencySymbol}`);
             const currencyInfo = await makeRPCCall('getcurrency', [currencySymbol]);
-            console.log(`RPC response for ${currencySymbol}:`, currencyInfo);
             
             if (currencyInfo && currencyInfo.currencyid) {
-                // Cache it for future use (as fallback only)
+                // Cache both directions
                 CURRENCY_IDS[currencySymbol] = currencyInfo.currencyid;
+                CURRENCY_IDS[currencyInfo.currencyid] = currencySymbol;
+                
+                // Also store decimals for conversion
+                CURRENCY_IDS[currencySymbol].decimals = currencyInfo.decimals || 8;
+                
                 console.log(`Using real-time currency ID for ${currencySymbol}:`, currencyInfo.currencyid);
                 return currencyInfo.currencyid;
             }
         } catch (rpcError) {
             console.warn(`RPC error fetching currency ID for ${currencySymbol}:`, rpcError);
-            console.log('Trying fallback methods...');
         }
 
-        // Fallback: check if we have it in our cache
-        if (CURRENCY_IDS[currencySymbol]) {
-            console.log(`Using cached currency ID for ${currencySymbol}:`, CURRENCY_IDS[currencySymbol]);
-            return CURRENCY_IDS[currencySymbol];
+        // Try reverse lookup by ID if symbol is actually an ID
+        if (currencySymbol.startsWith('i') && CURRENCY_IDS[currencySymbol]) {
+            console.log(`Found reverse mapping for ${currencySymbol}:`, CURRENCY_IDS[currencySymbol]);
+            return currencySymbol; // Return the ID itself
+        }
+
+        // Fallback to symbol as ID for known currencies
+        const knownCurrencies = {
+            'VRSCTEST': {id: 'iJhCezBExJHvtyH3fGhNnt2NhU4Ztkf2yq', decimals: 8},
+            'VRSC': {id: 'i5w5MuNik5NtLcYmNzcvaoixooEebB6MGV', decimals: 8},
+            'USD': {id: 'iFawzbS99RqGs7J2TNxME1TmmayBGuRkA2', decimals: 8},
+            'BANKROLL': {id: 'iC7z7iQpRj3jHkK1WBcFioKJqWYdZF5v1T', decimals: 8}
+        };
+        
+        if (knownCurrencies[currencySymbol]) {
+            console.log(`Using hardcoded ID for ${currencySymbol}:`, knownCurrencies[currencySymbol].id);
+            CURRENCY_IDS[currencySymbol] = knownCurrencies[currencySymbol].id;
+            CURRENCY_IDS[knownCurrencies[currencySymbol].id] = currencySymbol;
+            CURRENCY_IDS[currencySymbol].decimals = knownCurrencies[currencySymbol].decimals;
+            return knownCurrencies[currencySymbol].id;
         }
 
         throw new Error(`Could not find currency ID for ${currencySymbol}`);
@@ -216,25 +243,154 @@ async function resolveVerusId(verusId) {
     }
 }
 
+
+async function getCurrencyInfo(currencySymbol) {
+    try {
+        console.log(`Getting currency info for: ${currencySymbol}`);
+        
+        // First try the cache
+        if (CURRENCY_CACHE[currencySymbol] && CURRENCY_CACHE[currencySymbol].id) {
+            console.log(`Using cached currency info for ${currencySymbol}:`, CURRENCY_CACHE[currencySymbol]);
+            return CURRENCY_CACHE[currencySymbol];
+        }
+        
+        // Then try RPC call
+        try {
+            console.log(`Making RPC call for currency: ${currencySymbol}`);
+            const currencyInfo = await makeRPCCall('getcurrency', [currencySymbol]);
+            
+            if (currencyInfo && currencyInfo.currencyid) {
+                // Create cache object
+                const info = {
+                    id: currencyInfo.currencyid,
+                    symbol: currencySymbol,
+                    decimals: currencyInfo.decimals || 8,
+                    name: currencyInfo.name || currencySymbol
+                };
+                
+                // Cache both directions
+                CURRENCY_CACHE[currencySymbol] = info;
+                CURRENCY_CACHE[currencyInfo.currencyid] = info;
+                
+                console.log(`Using real-time currency info for ${currencySymbol}:`, info);
+                return info;
+            }
+        } catch (rpcError) {
+            console.warn(`RPC error fetching currency info for ${currencySymbol}:`, rpcError);
+        }
+
+        // Try reverse lookup by ID if symbol is actually an ID
+        if (currencySymbol.startsWith('i') && CURRENCY_CACHE[currencySymbol]) {
+            console.log(`Found reverse mapping for ${currencySymbol}:`, CURRENCY_CACHE[currencySymbol]);
+            return CURRENCY_CACHE[currencySymbol];
+        }
+
+        // Fallback to known currencies
+        const knownCurrencies = {
+            'VRSCTEST': {id: 'iJhCezBExJHvtyH3fGhNnt2NhU4Ztkf2yq', decimals: 8},
+            'VRSC': {id: 'i5w5MuNik5NtLcYmNzcvaoixooEebB6MGV', decimals: 8},
+            'USD': {id: 'iFawzbS99RqGs7J2TNxME1TmmayBGuRkA2', decimals: 8},
+            'BANKROLL': {id: 'iC7z7iQpRj3jHkK1WBcFioKJqWYdZF5v1T', decimals: 8}
+        };
+        
+        if (knownCurrencies[currencySymbol]) {
+            console.log(`Using hardcoded info for ${currencySymbol}:`, knownCurrencies[currencySymbol]);
+            // Cache both directions
+            CURRENCY_CACHE[currencySymbol] = knownCurrencies[currencySymbol];
+            CURRENCY_CACHE[knownCurrencies[currencySymbol].id] = knownCurrencies[currencySymbol];
+            return knownCurrencies[currencySymbol];
+        }
+
+        throw new Error(`Could not find currency info for ${currencySymbol}`);
+    } catch (error) {
+        console.error('Error getting currency info:', error);
+        throw error;
+    }
+}
+
+// Update getCurrencyValueFromUtxo to use the new cache
 function getCurrencyValueFromUtxo(utxo, currency) {
-    if (!currency || currency === store.getters['network/mainCoin']) {
+    const mainCoin = store.getters['network/mainCoin'];
+    
+    // Always handle main coin first
+    if (!currency || currency === mainCoin) {
         return utxo.satoshis || 0;
     }
 
-    // For non-main coins, check currencyvalues
+    let currencyInfo;
+    try {
+        currencyInfo = CURRENCY_CACHE[currency] || getCurrencyInfo(currency);
+    } catch (e) {
+        console.warn('Could not get currency info, using fallback', e);
+        currencyInfo = {id: currency, decimals: 8};
+    }
+    
+    const currencyId = currencyInfo.id || currency;
+    
+    console.log('getCurrencyValueFromUtxo called with:', { 
+        currency, 
+        currencyId,
+        utxo: {
+            txid: utxo.txid,
+            outputIndex: utxo.outputIndex,
+            currencyvalues: utxo.currencyvalues
+        }
+    });
+
+    // Check currencyvalues
     if (utxo.currencyvalues) {
-        // Try both the currency symbol and its ID
-        for (const [id, value] of Object.entries(utxo.currencyvalues)) {
-            if (id === currency || // Direct match with currency symbol
-                id === CURRENCY_IDS[currency] || // Match with known currency ID
-                (value && value.currencyname === currency)) { // Match with currency name in value
-                console.log(`Found ${currency} value in UTXO:`, value);
-                return toSatoshis(value);
+        // First try direct ID lookup
+        if (currencyId in utxo.currencyvalues) {
+            const value = utxo.currencyvalues[currencyId];
+            console.log('Found value by currency ID:', { currencyId, value });
+            return value; 
+        }
+        
+        // Then try symbol lookup
+        if (currency in utxo.currencyvalues) {
+            const value = utxo.currencyvalues[currency];
+            console.log('Found value by currency symbol:', { currency, value });
+            return value;
+        }
+        
+        // Then try reverse symbol lookup
+        const reverseSymbol = currencyInfo.symbol;
+        if (reverseSymbol && reverseSymbol in utxo.currencyvalues) {
+            const value = utxo.currencyvalues[reverseSymbol];
+            console.log('Found value by reverse symbol:', { reverseSymbol, value });
+            return value;
+        }
+        
+        // Finally, check all keys for matching ID or symbol
+        for (const [key, value] of Object.entries(utxo.currencyvalues)) {
+            // If key matches currency ID
+            if (key === currencyId) {
+                console.log('Found matching currency ID in entries:', { key, value });
+                return value;
+            }
+            
+            // If key matches currency symbol
+            if (key === currency) {
+                console.log('Found matching currency symbol in entries:', { key, value });
+                return value;
+            }
+            
+            // If value is an object with currencyname property
+            if (value && typeof value === 'object') {
+                if (value.currencyname === currency || 
+                    (value.currencyname && value.currencyname.toLowerCase() === currency.toLowerCase())) {
+                    console.log('Found matching currency name in object:', { 
+                        currency, 
+                        currencyname: value.currencyname,
+                        value: value.value
+                    });
+                    return value.value || 0;
+                }
             }
         }
     }
 
-    console.log(`No ${currency} value found in UTXO:`, utxo);
+    console.warn(`No ${currency} value found in UTXO:`, utxo);
     return 0;
 }
 
@@ -441,8 +597,10 @@ function buildUtxoCurrencyMap(utxos, mainCoin) {
             // Find the first currency symbol or id with a positive value
             let found = false;
             for (const [id, value] of Object.entries(utxo.currencyvalues)) {
-                // Try to get currency symbol from value object or fallback to id
-                const symbol = (value && typeof value === 'object' && value.currencyname) ? value.currencyname : id;
+                // Try to get currency symbol from cache or value object
+                const symbol = CURRENCY_IDS[id] || 
+                              (value && typeof value === 'object' && value.currencyname) || 
+                              id;
                 if ((typeof value === 'object' && value.value > 0) || (typeof value === 'number' && value > 0)) {
                     map[key] = symbol;
                     found = true;
@@ -559,7 +717,19 @@ async function refreshUtxos(address) {
         throw error;
     }
 }
-
+async function getCurrencyDecimals(currencySymbol) {
+    try {
+        console.log(`Getting decimals for currency: ${currencySymbol}`);
+        const currencyInfo = await makeRPCCall('getcurrency', [currencySymbol]);
+        if (currencyInfo && currencyInfo.decimals !== undefined) {
+            return currencyInfo.decimals;
+        }
+        return 8; // Default to 8 decimals
+    } catch (error) {
+        console.warn(`Error getting decimals for ${currencySymbol}:`, error);
+        return 8; // Fallback to 8 decimals
+    }
+}
 async function sendCurrency(fromAddressOrParams, toAddress, amount, privateKey, currency) {
     let params;
     let selectedUtxos = [];
@@ -580,11 +750,10 @@ async function sendCurrency(fromAddressOrParams, toAddress, amount, privateKey, 
         params.currency = store.getters['network/mainCoin'];
     }
 
-    // Handle case when password is provided instead of privateKey (from CurrencyDetails.vue)
+    // Handle case when password is provided instead of privateKey
     if (params.password && !params.privateKey) {
         try {
             console.log('Getting private key from wallet store with password');
-            // Get private key from wallet store
             params.privateKey = await store.dispatch('wallet/getPrivateKey', {
                 currency: params.currency,
                 password: params.password
@@ -610,11 +779,26 @@ async function sendCurrency(fromAddressOrParams, toAddress, amount, privateKey, 
     });
 
     try {
-        // Get currency ID if not main coin
-        let currencyId;
+        // Get currency info early for non-main coins
+        let currencyInfo;
+        let currencyDecimals = 8; // Default to 8 decimals (for main coin)
+        
         if (!isMainCoin) {
-            currencyId = await getCurrencyId(params.currency);
-            console.log('Using currency ID:', currencyId, 'for currency:', params.currency);
+            try {
+                currencyInfo = await getCurrencyInfo(params.currency);
+                console.log('Currency info for transaction:', currencyInfo);
+                
+                currencyDecimals = currencyInfo.decimals || 8;
+                console.log(`Currency decimals for ${params.currency}: ${currencyDecimals}`);
+            } catch (error) {
+                console.warn('Could not get currency info, using fallback:', error);
+                currencyInfo = {
+                    id: params.currency,
+                    symbol: params.currency,
+                    decimals: 8
+                };
+                currencyDecimals = 8;
+            }
         }
 
         const NETWORK = getNetworkConfig();
@@ -633,8 +817,20 @@ async function sendCurrency(fromAddressOrParams, toAddress, amount, privateKey, 
             console.log('Resolved recipient Verus ID:', params.toAddress, 'to:', resolvedToAddress);
         }
 
-        const amountSats = toSatoshis(params.amount);
-        console.log('Amount in satoshis:', amountSats);
+        // Calculate amount in base units
+        const amountBaseUnits = isMainCoin 
+            ? toSatoshis(params.amount)
+            : Math.floor(params.amount * Math.pow(10, currencyDecimals));
+            
+        console.log(`Amount in base units: ${amountBaseUnits}`);
+
+        // Helper function to format amounts for display
+        const displayAmount = (value, isMain = isMainCoin) => {
+            if (isMain) {
+                return fromSatoshis(value);
+            }
+            return (value / Math.pow(10, currencyDecimals)).toFixed(currencyDecimals);
+        };
 
         // Refresh UTXOs to make sure we have the latest data
         const utxos = await refreshUtxos(resolvedFromAddress);
@@ -644,6 +840,29 @@ async function sendCurrency(fromAddressOrParams, toAddress, amount, privateKey, 
         }
 
         console.log('Available UTXOs:', utxos);
+
+        // Pre-fetch currency info for all symbols in UTXOs
+        const currencySymbols = new Set();
+        utxos.forEach(utxo => {
+            if (utxo.currencyvalues) {
+                Object.entries(utxo.currencyvalues).forEach(([id, value]) => {
+                    if (typeof value === 'object' && value.currencyname) {
+                        currencySymbols.add(value.currencyname);
+                    } else if (id.startsWith('i') && CURRENCY_CACHE[id]?.symbol) {
+                        currencySymbols.add(CURRENCY_CACHE[id].symbol);
+                    }
+                });
+            }
+        });
+
+        console.log('Pre-fetching currency info for:', Array.from(currencySymbols));
+        await Promise.all(Array.from(currencySymbols).map(async symbol => {
+            try {
+                await getCurrencyInfo(symbol);
+            } catch (e) {
+                console.warn(`Could not get info for ${symbol}`, e);
+            }
+        }));
 
         const currentHeight = await makeRPCCall('getblockcount', []);
         
@@ -659,53 +878,11 @@ async function sendCurrency(fromAddressOrParams, toAddress, amount, privateKey, 
         let currencyTotal = 0;
         let feeTotal = 0;
 
-        const isUtxoMatchingCurrency = (utxo, targetCurrency) => {
-            console.log(`Checking UTXO for ${targetCurrency}:`, {
-                txid: utxo.txid?.substring(0, 10) + '...',
-                outputIndex: utxo.outputIndex,
-                satoshis: utxo.satoshis,
-                currencyvalues: utxo.currencyvalues
-            });
-            
-            // For main coin (VRSC/VRSCTEST), use the satoshis field
-            if (!targetCurrency || targetCurrency === store.getters['network/mainCoin']) {
-                console.log(`${targetCurrency} is main coin, value:`, utxo.satoshis);
-                return utxo.satoshis > 0;
-            }
-            
-            // For other currencies, check in currencyvalues
-            if (utxo.currencyvalues) {
-                console.log('Currency values in UTXO:', utxo.currencyvalues);
-                
-                // Check all possible ways the currency could be referenced
-                for (const [id, value] of Object.entries(utxo.currencyvalues)) {
-                    console.log(`Comparing ${id} with ${targetCurrency}`);
-                    
-                    // Direct match with currency symbol
-                    if (id === targetCurrency) {
-                        console.log(`Direct match found for ${targetCurrency}, value:`, value);
-                        return true;
-                    }
-                    
-                    // Match with known currency ID
-                    if (CURRENCY_IDS[targetCurrency] && id === CURRENCY_IDS[targetCurrency]) {
-                        console.log(`ID match found for ${targetCurrency}, value:`, value);
-                        return true;
-                    }
-                    
-                    // Match with currency name in value object
-                    if (value && typeof value === 'object' && value.currencyname === targetCurrency) {
-                        console.log(`Name match found for ${targetCurrency} in value object:`, value);
-                        return true;
-                    }
-                }
-            }
-            
-            console.log(`No ${targetCurrency} value found in UTXO`);
-            return false;
-        };
         // Select UTXOs for the currency being sent
-        const currencyUtxos = utxos.filter(utxo => isUtxoMatchingCurrency(utxo, params.currency));
+        const currencyUtxos = utxos.filter(utxo => {
+            const value = getCurrencyValueFromUtxo(utxo, params.currency);
+            return value > 0;
+        });
         
         console.log(`Found ${currencyUtxos.length} UTXOs for ${params.currency}`);
 
@@ -713,21 +890,36 @@ async function sendCurrency(fromAddressOrParams, toAddress, amount, privateKey, 
             throw new Error(`No UTXOs available for ${params.currency}`);
         }
 
+        // Log details of selected UTXOs
+        console.log(`Selected UTXOs for ${params.currency}:`);
+        currencyUtxos.forEach(utxo => {
+            const value = getCurrencyValueFromUtxo(utxo, params.currency);
+            console.log(`- ${utxo.txid}:${utxo.outputIndex} = ${displayAmount(value)} ${params.currency}`);
+        });
+
         for (const utxo of currencyUtxos) {
-            if (currencyTotal < amountSats) {
+            if (currencyTotal < amountBaseUnits) {
                 selectedUtxos.push(utxo);
                 txBuilder.addInput(utxo.txid, utxo.outputIndex);
-                currencyTotal += getCurrencyValueFromUtxo(utxo, params.currency);
+                const utxoValue = getCurrencyValueFromUtxo(utxo, params.currency);
+                currencyTotal += utxoValue;
+                console.log(`Added UTXO ${utxo.txid}:${utxo.outputIndex} with ${displayAmount(utxoValue)} ${params.currency}`);
             }
         }
 
-        if (currencyTotal < amountSats) {
-            throw new Error(`Insufficient ${params.currency} funds. Need ${fromSatoshis(amountSats)} ${params.currency}, but only have ${fromSatoshis(currencyTotal)} ${params.currency}`);
+        console.log(`Total ${params.currency} selected: ${displayAmount(currencyTotal)}`);
+
+        if (currencyTotal < amountBaseUnits) {
+            const displayTotal = displayAmount(currencyTotal);
+            throw new Error(`Insufficient ${params.currency} funds. Need ${params.amount} ${params.currency}, but only have ${displayTotal} ${params.currency}`);
         }
 
         // If this isn't the main coin, we need additional UTXOs for the fee
         if (!isMainCoin) {
-            const feeUtxos = utxos.filter(utxo => isUtxoMatchingCurrency(utxo, mainCoin));
+            const feeUtxos = utxos.filter(utxo => {
+                const value = getCurrencyValueFromUtxo(utxo, mainCoin);
+                return value > 0;
+            });
             
             console.log(`Found ${feeUtxos.length} UTXOs for fees (${mainCoin})`);
             
@@ -739,37 +931,53 @@ async function sendCurrency(fromAddressOrParams, toAddress, amount, privateKey, 
                 if (feeTotal < feeSats) {
                     selectedUtxos.push(utxo);
                     txBuilder.addInput(utxo.txid, utxo.outputIndex);
-                    feeTotal += getCurrencyValueFromUtxo(utxo, mainCoin);
+                    const utxoValue = getCurrencyValueFromUtxo(utxo, mainCoin);
+                    feeTotal += utxoValue;
+                    console.log(`Added fee UTXO ${utxo.txid}:${utxo.outputIndex} with ${displayAmount(utxoValue, true)} ${mainCoin}`);
                 }
             }
 
+            console.log(`Total fee ${mainCoin} selected: ${displayAmount(feeTotal, true)}`);
+
             if (feeTotal < feeSats) {
-                throw new Error(`Insufficient ${mainCoin} for fee. Need ${fromSatoshis(feeSats)} ${mainCoin}, but only have ${fromSatoshis(feeTotal)} ${mainCoin}`);
+                throw new Error(`Insufficient ${mainCoin} for fee. Need ${displayAmount(feeSats, true)} ${mainCoin}, but only have ${displayAmount(feeTotal, true)} ${mainCoin}`);
             }
         } else {
-            if (currencyTotal < (amountSats + feeSats)) {
-                throw new Error(`Insufficient ${mainCoin} funds. Need ${fromSatoshis(amountSats + feeSats)} ${mainCoin} (including fee), but only have ${fromSatoshis(currencyTotal)} ${mainCoin}`);
+            if (currencyTotal < (amountBaseUnits + feeSats)) {
+                throw new Error(`Insufficient ${mainCoin} funds. Need ${displayAmount(amountBaseUnits + feeSats, true)} ${mainCoin} (including fee), but only have ${displayAmount(currencyTotal, true)} ${mainCoin}`);
             }
-            feeTotal = currencyTotal - amountSats;
+            feeTotal = currencyTotal - amountBaseUnits;
         }
 
         // Add recipient output with appropriate script
         if (!isMainCoin) {
             try {
-                // For token transactions, use standard P2PKH outputs just like main coin
-                // The difference is that we need to track which UTXOs contain which currencies
-                txBuilder.addOutput(resolvedToAddress, amountSats);
+                console.log(`Creating currency output for ${params.currency} to ${resolvedToAddress}`);
                 
-                // Add change output if needed
-                const currencyChange = currencyTotal - amountSats;
+                // Get currency ID
+                const currencyId = currencyInfo?.id || params.currency;
+                const scriptInfo = createCurrencyOutputScript(resolvedToAddress, currencyId);
+                
+                // Create P2SH output with ZERO value for currency outputs
+                txBuilder.addOutput(scriptInfo.p2shScript, 0);
+                console.log(`Added recipient output: 0 satoshis (currency output)`);
+                
+                // Add currency change output if needed
+                const currencyChange = currencyTotal - amountBaseUnits;
                 if (currencyChange > DUST_THRESHOLD) {
-                    txBuilder.addOutput(resolvedFromAddress, currencyChange);
+                    console.log(`Adding ${params.currency} change: ${displayAmount(currencyChange)}`);
+                    const changeScript = createCurrencyOutputScript(resolvedFromAddress, currencyId);
+                    txBuilder.addOutput(changeScript.p2shScript, 0);
                 }
                 
-                // When sending tokens, we need to add a fee output from the main coin UTXO
-                // This is the main coin change output
+                // Add main coin output to carry the conversion
+                txBuilder.addOutput(resolvedToAddress, amountBaseUnits);
+                console.log(`Added main coin output: ${amountBaseUnits} satoshis for conversion`);
+                
+                // Add main coin change output
                 const mainCoinChange = feeTotal - feeSats;
                 if (mainCoinChange > DUST_THRESHOLD) {
+                    console.log(`Adding ${mainCoin} change: ${displayAmount(mainCoinChange, true)}`);
                     txBuilder.addOutput(resolvedFromAddress, mainCoinChange);
                 }
             } catch (error) {
@@ -778,11 +986,13 @@ async function sendCurrency(fromAddressOrParams, toAddress, amount, privateKey, 
             }
         } else {
             // For main coin, use standard output
-            txBuilder.addOutput(resolvedToAddress, amountSats);
+            txBuilder.addOutput(resolvedToAddress, amountBaseUnits);
+            console.log(`Added main recipient output: ${amountBaseUnits} satoshis`);
             
             // Add change
-            const change = currencyTotal - amountSats - feeSats;
+            const change = currencyTotal - amountBaseUnits - feeSats;
             if (change > DUST_THRESHOLD) {
+                console.log(`Adding ${mainCoin} change: ${displayAmount(change, true)}`);
                 txBuilder.addOutput(resolvedFromAddress, change);
             }
         }
@@ -791,24 +1001,19 @@ async function sendCurrency(fromAddressOrParams, toAddress, amount, privateKey, 
         try {
             // Handle different formats of private key
             if (typeof params.privateKey === 'string') {
-                // Direct WIF string
                 keyPair = ECPair.fromWIF(params.privateKey, NETWORK);
             } 
             else if (typeof params.privateKey === 'object' && params.privateKey !== null) {
-                // If it's a complex object from getPrivateKey (wallet store)
                 if (params.privateKey.wif) {
                     keyPair = ECPair.fromWIF(params.privateKey.wif, NETWORK);
                 } else if (params.privateKey.privateKey) {
                     keyPair = ECPair.fromWIF(params.privateKey.privateKey, NETWORK);
                 } else if (params.privateKey.toString) {
-                    // Try toString() method if available
                     const wifString = params.privateKey.toString();
                     keyPair = ECPair.fromWIF(wifString, NETWORK);
                 } else {
-                    // Last resort - try JSON stringify and extract
                     console.log('Private key is complex object, attempting to extract WIF');
                     const keyString = JSON.stringify(params.privateKey);
-                    // Very basic extraction - in a real app you'd use a more robust method
                     const wifMatch = keyString.match(/"(wif|privateKey)":"([^"]+)"/);
                     if (wifMatch && wifMatch[2]) {
                         keyPair = ECPair.fromWIF(wifMatch[2], NETWORK);
@@ -832,45 +1037,29 @@ async function sendCurrency(fromAddressOrParams, toAddress, amount, privateKey, 
         for (let i = 0; i < selectedUtxos.length; i++) {
             const utxo = selectedUtxos[i];
             let value;
+            let currencyType;
             
-            // For token UTXOs, we need to use the correct script and value
             if (!isMainCoin && utxo.currencyvalues && Object.keys(utxo.currencyvalues).length > 0) {
-                // For token UTXOs, use the token value
                 value = getCurrencyValueFromUtxo(utxo, params.currency);
-                console.log(`Signing token input with value: ${value}`);
-                
-                try {
-                    // For token UTXOs, we need to use the standard P2PKH script
-                    // The key is to use the correct value for signing
-                    txBuilder.sign(
-                        i,
-                        keyPair,
-                        null, // Use standard P2PKH script
-                        Transaction.SIGHASH_ALL,
-                        value
-                    );
-                } catch (error) {
-                    console.error('Error signing token input:', error, 'Input index:', i, 'UTXO:', utxo);
-                    throw error;
-                }
+                currencyType = params.currency;
+                console.log(`Signing token input #${i} (${currencyType}) with value: ${value}`);
             } else {
-                // For main coin UTXOs, use the satoshis value
                 value = utxo.satoshis || 0;
-                console.log(`Signing main coin input with value: ${value}`);
-                
-                try {
-                    // Standard signing for main coin UTXOs
-                    txBuilder.sign(
-                        i,
-                        keyPair,
-                        null,
-                        Transaction.SIGHASH_ALL,
-                        value
-                    );
-                } catch (error) {
-                    console.error('Error signing main coin input:', error, 'Input index:', i, 'UTXO:', utxo);
-                    throw error;
-                }
+                currencyType = mainCoin;
+                console.log(`Signing main coin input #${i} with value: ${value}`);
+            }
+            
+            try {
+                txBuilder.sign(
+                    i,
+                    keyPair,
+                    null,
+                    Transaction.SIGHASH_ALL,
+                    value
+                );
+            } catch (error) {
+                console.error(`Error signing input #${i} (${utxo.txid}:${utxo.outputIndex}):`, error);
+                throw error;
             }
         }
 
@@ -878,102 +1067,66 @@ async function sendCurrency(fromAddressOrParams, toAddress, amount, privateKey, 
         const txHex = tx.toHex();
         console.log('Transaction built and serialized');
 
-        // Debugging info
-        console.log('Transaction details:', {
-            inputs: txBuilder.inputs,
-            outputs: tx.outs,
-            hex: txHex
+        // Detailed debugging
+        console.log('Transaction inputs:');
+        txBuilder.inputs.forEach((input, index) => {
+            console.log(`Input #${index}: ${input.hash}:${input.index}`);
         });
         
-        // Enhanced debugging - print full transaction hex
-        console.log('Full transaction hex:', txHex);
-        
-        // Print detailed output information
-        console.log('Detailed outputs:');
+        console.log('Transaction outputs:');
         tx.outs.forEach((output, index) => {
-            console.log(`Output ${index}:`, {
-                value: output.value,
-                scriptPubKey: output.script.toString('hex')
-            });
+            console.log(`Output #${index}: ${output.value} satoshis`);
+            console.log(`  Script: ${output.script.toString('hex')}`);
         });
+        
+        console.log('Full transaction hex:', txHex);
 
-        // Perform final verification of UTXOs before broadcast
+        // Final UTXO verification
         const currencyMap = buildUtxoCurrencyMap(selectedUtxos, mainCoin);
         if (!await performFinalUtxoVerification(selectedUtxos, mainCoin, currencyMap)) {
             throw new Error('Final UTXO verification failed, aborting broadcast');
         }
 
         try {
-            // Add more detailed error handling for RPC calls
             console.log('Sending raw transaction to network...');
+            const txid = await makeRPCCall('sendrawtransaction', [txHex]);
+            console.log('Transaction sent successfully:', txid);
             
-            // For token transactions, we need to modify the transaction before sending
-            if (!isMainCoin) {
-                // Add token data to the transaction
-                const currencyId = await getCurrencyId(params.currency);
-                
-                // Log the transaction with token data for debugging
-                console.log('Sending token transaction with currency ID:', currencyId);
-                console.log('Token amount:', amountSats);
+            if (txid && txid.error) {
+                console.error('RPC error sending transaction:', txid.error);
+                throw new Error(`RPC error sending transaction: ${txid.error.message}`);
             }
             
-            // Get detailed error information if available
+            const transactionData = {
+                txid,
+                type: 'sent',
+                amount: params.amount,
+                currency: params.currency,
+                from: params.fromAddress,
+                to: params.toAddress,
+                resolvedFrom: resolvedFromAddress,
+                resolvedTo: resolvedToAddress,
+                timestamp: new Date().toISOString(),
+                status: 'pending',
+                isFromVerusId: isVerusID(params.fromAddress),
+                isToVerusId: isVerusID(params.toAddress)
+            };
+            
+            // Store transaction
             try {
-                const txid = await makeRPCCall('sendrawtransaction', [txHex]);
-                console.log('Transaction sent successfully:', txid);
-                
-                // Enhanced error handling - catch and log any RPC errors
-                if (txid && txid.error) {
-                    console.error('RPC error sending transaction:', txid.error);
-                    throw new Error(`RPC error sending transaction: ${txid.error.message}`);
-                }
-                
-                const transactionData = {
-                    txid,
-                    type: 'sent',
-                    amount: params.amount,
-                    currency: params.currency,
-                    from: params.fromAddress,
-                    to: params.toAddress,
-                    resolvedFrom: resolvedFromAddress,
-                    resolvedTo: resolvedToAddress,
-                    timestamp: new Date().toISOString(),
-                    status: 'pending',
-                    isFromVerusId: isVerusID(params.fromAddress),
-                    isToVerusId: isVerusID(params.toAddress)
-                };
-                
-                // Store the transaction in the transaction history
-                try {
-                    if (typeof store !== 'undefined' && store.dispatch) {
-                        // Try to use Vuex store if available
-                        store.dispatch('transactions/addTransaction', transactionData);
-                        console.log('Transaction stored via Vuex:', transactionData);
-                    } else {
-                        // Fallback to direct browser storage if store isn't available
-                        console.log('Store not available, using direct storage');
-                        storeTransactionDirectly(transactionData);
-                    }
-                } catch (storeError) {
-                    console.warn('Could not store transaction in Vuex:', storeError);
-                    // Try direct storage as fallback
+                if (typeof store !== 'undefined' && store.dispatch) {
+                    store.dispatch('transactions/addTransaction', transactionData);
+                } else {
                     storeTransactionDirectly(transactionData);
                 }
-
-                return { txid };
-            } catch (error) {
-                // Try to get more detailed error information
-                console.error('Error sending transaction:', error);
-                
-                // If we have a specific error message, include it
-                if (error.message) {
-                    throw new Error(`Failed to send transaction: ${error.message}`);
-                } else {
-                    throw new Error('Failed to send transaction: RPC call failed');
-                }
+            } catch (storeError) {
+                console.warn('Could not store transaction:', storeError);
+                storeTransactionDirectly(transactionData);
             }
+
+            return { txid };
         } catch (error) {
-            console.error('Error in sendCurrency:', error);
+            console.error('Error sending transaction:', error);
             throw error;
         }
     } catch (error) {
@@ -981,7 +1134,6 @@ async function sendCurrency(fromAddressOrParams, toAddress, amount, privateKey, 
         throw error;
     }
 }
-
 async function sendConvertCurrency(fromAddressOrParams, toAddress, amount, privateKey, currency, via = DEFAULT_VIA_CURRENCY, convertto = DEFAULT_CONVERT_TO) {
     let params;
     if (typeof fromAddressOrParams === 'object') {
