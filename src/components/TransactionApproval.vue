@@ -102,7 +102,7 @@
 import { ref, computed, onMounted } from 'vue';
 import browser from 'webextension-polyfill';
 import LoadingBar from './LoadingBar.vue';
-import { estimateFee, isVerusID } from '../utils/transaction';
+// Transaction functionality temporarily disabled
 
 export default {
   name: 'TransactionApproval',
@@ -143,8 +143,8 @@ export default {
         return Math.max(0, parseFloat(currentBalance.value) - totalAmount.value);
     });
 
-    const isFromAddressVerusId = computed(() => isVerusID(fromAddress.value));
-    const isToAddressVerusId = computed(() => isVerusID(toAddress.value));
+        const isFromAddressVerusId = computed(() => false);
+    const isToAddressVerusId = computed(() => false);
     const isNewAddress = computed(() => !knownAddresses.value.has(toAddress.value));
     const isKnownOrigin = computed(() => {
         const origin = requestData.value?.origin;
@@ -190,97 +190,26 @@ export default {
     };
 
     const loadTransactionData = async () => {
-      try {
-        if (!props.requestId) {
-          throw new Error('No transaction request ID provided');
-        }
-
-        // Get transaction request data from background
-        const response = await browser.runtime.sendMessage({
-          type: 'GET_TRANSACTION_REQUEST',
-          requestId: props.requestId
-        });
-
-        if (!response.success || response.error) {
-          throw new Error(response.error || 'Failed to get transaction data');
-        }
-
-        requestData.value = response.transaction;
-
-        // Calculate fee
-        estimatedFee.value = await estimateFee(
-          requestData.value.fromAddress,
-          requestData.value.amount,
-          requestData.value.currency
-        );
-
-        // Get current balance
-        const balanceResponse = await browser.runtime.sendMessage({
-          type: 'VERUS_GET_BALANCE_REQUEST',
-          payload: {
-            address: requestData.value.fromAddress,
-            currency: requestData.value.currency
-          }
-        });
-
-        if (balanceResponse.success && balanceResponse.balance) {
-          currentBalance.value = balanceResponse.balance;
-        }
-
-        loading.value = false;
-      } catch (error) {
-        console.error('Failed to load transaction data:', error);
-        loading.value = false;
-        error.value = error.message || 'Failed to load transaction data';
-      }
+      loading.value = false;
+      error.value = 'Transaction functionality is currently disabled';
     };
 
     const approve = async () => {
-      if (!canApprove.value) return;
-      
-      processing.value = true;
-      try {
-        const response = await browser.runtime.sendMessage({
-          type: 'APPROVE_TRANSACTION',
-          payload: {
-            requestId: props.requestId
-          }
-        });
-
-        if (response.error) {
-          throw new Error(response.error);
-        }
-
-        window.close();
-      } catch (err) {
-        console.error('Failed to approve transaction:', err);
-        error.value = err.message;
-        processing.value = false;
-      }
+      error.value = 'Transaction functionality is currently disabled';
+      return;
     };
 
     const reject = async () => {
-      processing.value = true;
-      try {
-        const response = await browser.runtime.sendMessage({
-          type: 'REJECT_TRANSACTION',
-          payload: {
-            requestId: props.requestId
-          }
-        });
-
-        window.close();
-      } catch (err) {
-        console.error('Failed to reject transaction:', err);
-        error.value = err.message;
-        processing.value = false;
-      }
+      window.close();
     };
 
     // Lifecycle
     onMounted(() => {
       loadTransactionData();
     });
+    
+    // Transaction functionality is currently disabled
+    const isVerusID = () => false;
 
     return {
       loading,

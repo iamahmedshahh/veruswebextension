@@ -120,7 +120,7 @@ import { useStore } from 'vuex'
 import { useRoute } from 'vue-router'
 import TransactionHistory from './TransactionHistory.vue'
 import QRCode from 'qrcode'
-import { executeTransactionWithRetry } from '../utils/transaction'
+// Transaction functionality temporarily disabled
 
 const store = useStore()
 const route = useRoute()
@@ -165,53 +165,8 @@ const handleReceive = async () => {
 }
 
 const executeSend = async () => {
-  if (!recipientAddress.value || !amount.value || !walletPassword.value) {
-    error.value = 'Please fill in all fields'
-    return
-  }
-
-  try {
-    isLoading.value = true
-    error.value = ''
-    
-    const wallet = store.state.wallet
-    if (!wallet) {
-      throw new Error('Wallet not found')
-    }
-
-    // Execute the transaction based on conversion preference
-            if (useConversion.value) {
-              await executeTransactionWithRetry({
-                fromAddress: wallet.address,
-                toAddress: recipientAddress.value,
-                amount: parseFloat(amount.value),
-                password: walletPassword.value,
-                currency: currency.value
-                // Using default via and convertto from transaction.js
-              }, true); // true indicates this is a conversion transaction
-            } else {
-              await executeTransactionWithRetry({
-                fromAddress: wallet.address,
-                toAddress: recipientAddress.value,
-                amount: parseFloat(amount.value),
-                password: walletPassword.value,
-                currency: currency.value
-              }, false); // false indicates this is a regular transaction
-            }
-    
-    showSendModal.value = false
-    recipientAddress.value = ''
-    amount.value = ''
-    walletPassword.value = ''
-    useConversion.value = false
-    
-    // Refresh balances after successful transaction
-    await store.dispatch('currencies/fetchBalances')
-  } catch (err) {
-    error.value = err.message || 'Failed to send transaction'
-  } finally {
-    isLoading.value = false
-  }
+  error.value = 'Sending functionality is currently disabled'
+  return
 }
 
 const copyToClipboard = async (text) => {

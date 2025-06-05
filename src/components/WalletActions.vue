@@ -102,7 +102,7 @@
 <script setup>
 import { ref, computed, watch } from 'vue'
 import { useStore } from 'vuex'
-import { sendCurrency, estimateFee, validateAddress } from '../utils/transaction'
+// Transaction functionality temporarily disabled
 import CurrencyCard from './CurrencyCard.vue'
 import debounce from 'lodash/debounce'
 
@@ -141,25 +141,14 @@ const isValidForm = computed(() => {
 })
 
 // Validation functions
-async function validateRecipientAddress() {
-  if (!recipientAddress.value) {
-    addressValidationMessage.value = ''
-    return
-  }
-  
-  try {
-    const isValid = await validateAddress(recipientAddress.value)
-    addressValidationMessage.value = isValid ? '' : 'Invalid address format'
-  } catch (err) {
-    addressValidationMessage.value = 'Error validating address'
-  }
+const validateRecipientAddress = () => {
+  // Address validation disabled
+  return false
 }
 
 async function handleAmountChange() {
   if (!amount.value) {
     amountValidationMessage.value = ''
-    estimatedFee.value = 0
-    return
   }
 
   const amountNum = parseFloat(amount.value)
@@ -178,80 +167,14 @@ async function handleAmountChange() {
   await updateEstimatedFee()
 }
 
-const updateEstimatedFee = debounce(async () => {
-  if (!amount.value || !recipientAddress.value || !store.state.wallet.address) return
-  
-  try {
-    const fee = await estimateFee(
-      store.state.wallet.address,
-      recipientAddress.value,
-      parseFloat(amount.value),
-      selectedCurrency.value
-    )
-    estimatedFee.value = fee
+const updateEstimatedFee = () => {
+  // Fee estimation disabled
+  estimatedFee.value = 0
+}
 
-    // Validate total amount after fee
-    const total = parseFloat(amount.value) + fee
-    if (total > currentBalance.value) {
-      amountValidationMessage.value = 'Insufficient balance for amount + fee'
-    }
-  } catch (err) {
-    console.error('Error estimating fee:', err)
-    estimatedFee.value = 0
-  }
-}, 500)
-
-async function handleSend() {
-  try {
-    error.value = ''
-    loading.value = true
-    
-    // Final validation
-    if (!isValidForm.value) {
-      throw new Error('Please fix validation errors before sending')
-    }
-    
-    // Get current wallet data from store
-    const fromAddress = store.state.wallet.address
-    const privateKey = await store.dispatch('wallet/getPrivateKey', {
-      currency: selectedCurrency.value,
-      password: walletPassword.value
-    })
-    
-    // Send transaction
-    const result = await sendCurrency(
-      fromAddress,
-      recipientAddress.value,
-      parseFloat(amount.value),
-      privateKey,
-      selectedCurrency.value
-    )
-    
-    // Update balances after successful send
-    await store.dispatch('wallet/updateBalances')
-    
-    // Close modal and reset form
-    showSendModal.value = false
-    recipientAddress.value = ''
-    amount.value = ''
-    walletPassword.value = ''
-    estimatedFee.value = 0
-    
-    // Show success notification
-    store.commit('notification/show', {
-      type: 'success',
-      message: `Transaction sent successfully! TXID: ${result.txid}`
-    })
-    
-  } catch (err) {
-    error.value = err.message
-    store.commit('notification/show', {
-      type: 'error',
-      message: `Failed to send transaction: ${err.message}`
-    })
-  } finally {
-    loading.value = false
-  }
+const handleSend = async () => {
+  error.value = 'Sending functionality is currently disabled'
+  return
 }
 
 // Watch for modal open/close to reset form

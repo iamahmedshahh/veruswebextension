@@ -228,7 +228,7 @@ import Settings from './Settings.vue';
 import CurrencySelector from './CurrencySelector.vue';
 import NFTGallery from './NFTGallery.vue';
 import TransactionHistory from './TransactionHistory.vue';
-import { sendCurrency, estimateFee, validateAddress } from '../utils/transaction';
+// Transaction functionality temporarily disabled
 
 export default {
     name: 'WalletDashboard',
@@ -319,91 +319,13 @@ export default {
         };
 
         const executeSend = async () => {
-            try {
-                console.log('Starting send transaction...');
-                error.value = '';
-                isLoading.value = true;
-                
-                // Validate inputs
-                console.log('Validating address:', recipientAddress.value);
-                if (!validateAddress(recipientAddress.value)) {
-                    throw new Error('Invalid recipient address');
-                }
-                
-                const amountNum = parseFloat(amount.value);
-                console.log('Validating amount:', amountNum);
-                if (isNaN(amountNum) || amountNum <= 0) {
-                    throw new Error('Invalid amount');
-                }
-                
-                // Get current wallet data from store
-                console.log('Getting wallet data...');
-                const fromAddress = store.state.wallet.address;
-                if (!fromAddress) {
-                    throw new Error('Sender address not found in wallet');
-                }
-                
-                console.log('Getting private key...');
-                const privateKey = await store.dispatch('wallet/getPrivateKey', {
-                    currency: selectedCurrencyForAction.value,
-                    password: walletPassword.value
-                });
-                if (!privateKey) {
-                    throw new Error('Private key not available. Please check if wallet is unlocked');
-                }
-                
-                // Send transaction
-                console.log('Sending transaction...');
-                const result = await sendCurrency(
-                    fromAddress,
-                    recipientAddress.value,
-                    amountNum,
-                    privateKey,
-                    selectedCurrencyForAction.value
-                );
-                
-                console.log('Transaction sent successfully:', result);
-                
-                // Update balances after successful send
-                await store.dispatch('currencies/updateBalances');
-                
-                // Close modal and reset form
-                showSendModal.value = false;
-                recipientAddress.value = '';
-                amount.value = '';
-                walletPassword.value = '';
-                
-                // Show success notification
-                store.commit('notification/show', {
-                    type: 'success',
-                    message: `Transaction sent successfully! TXID: ${result.txid}`
-                });
-                
-            } catch (err) {
-                console.error('Send transaction failed:', err);
-                error.value = err.message;
-                store.commit('notification/show', {
-                    type: 'error',
-                    message: `Failed to send transaction: ${err.message}`
-                });
-            } finally {
-                isLoading.value = false;
-            }
+            error.value = 'Sending functionality is currently disabled';
+            return;
         };
 
-        const updateEstimatedFee = async () => {
-            if (!amount.value || !address.value) return;
-            
-            try {
-                const fee = await estimateFee(
-                    address.value,
-                    parseFloat(amount.value),
-                    selectedCurrencyForAction.value
-                );
-                estimatedFee.value = fee;
-            } catch (err) {
-                console.error('Error estimating fee:', err);
-            }
+        const updateEstimatedFee = () => {
+            // Fee estimation disabled
+            estimatedFee.value = 0;
         };
 
         const getAddressForCurrency = (currency) => {
